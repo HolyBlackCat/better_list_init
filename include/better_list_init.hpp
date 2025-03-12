@@ -32,7 +32,7 @@
 
 // The version number: `major*10000 + minor*100 + patch`.
 #ifndef BETTERLISTINIT_VERSION
-#define BETTERLISTINIT_VERSION 10000
+#define BETTERLISTINIT_VERSION 10001
 #endif
 
 // This file is included by this header automatically, if it exists.
@@ -1148,6 +1148,11 @@ namespace better_list_init
         #if BETTERLISTINIT_ALLOW_BRACES
         template <typename ...P>
         BETTERLISTINIT_IDENTIFIER(P &&...) -> BETTERLISTINIT_IDENTIFIER<P...>;
+        // Fix the `list(list)` deduction.
+        template <typename ...P> BETTERLISTINIT_IDENTIFIER(      BETTERLISTINIT_IDENTIFIER<P...> &&) -> BETTERLISTINIT_IDENTIFIER<      BETTERLISTINIT_IDENTIFIER<P...>>;
+        template <typename ...P> BETTERLISTINIT_IDENTIFIER(const BETTERLISTINIT_IDENTIFIER<P...> &&) -> BETTERLISTINIT_IDENTIFIER<const BETTERLISTINIT_IDENTIFIER<P...>>;
+        template <typename ...P> BETTERLISTINIT_IDENTIFIER(      BETTERLISTINIT_IDENTIFIER<P...> & ) -> BETTERLISTINIT_IDENTIFIER<      BETTERLISTINIT_IDENTIFIER<P...> &>;
+        template <typename ...P> BETTERLISTINIT_IDENTIFIER(const BETTERLISTINIT_IDENTIFIER<P...> & ) -> BETTERLISTINIT_IDENTIFIER<const BETTERLISTINIT_IDENTIFIER<P...> &>;
         #endif
     }
 

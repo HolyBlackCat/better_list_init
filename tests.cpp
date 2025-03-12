@@ -708,6 +708,17 @@ int main()
         ASSERT_EQ(z, 3);
     }
 
+    { // `list(list)` deduction.
+        // It's not entirely clear why this fails in C++14.
+        // It boils down to `std::vector<int> v(INIT())` not compiling, as opposed to `std::vector<int> v = INIT()`, which does compile.
+        // But why is a mystery.
+        #if BETTERLISTINIT_CXX_STANDARD > 14
+        std::vector<std::vector<int>> v = INIT(INIT());
+        ASSERT_EQ(v.size(), 1);
+        ASSERT_EQ(v[0].size(), 0);
+        #endif
+    }
+
     std::cout << "OK";
     #if BETTERLISTINIT_CXX_STANDARD >= 17 && !CONTAINERS_HAVE_MANDATORY_COPY_ELISION
     std::cout << " (without mandatory copy elision)";
