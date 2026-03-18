@@ -3,3 +3,4 @@
 compile_commands.json
 tests
 tests.exe
+tests.obj

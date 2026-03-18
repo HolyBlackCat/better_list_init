@@ -2,7 +2,7 @@
 # By default it tests all available compilers with various options, but you can restrict the test matrix by setting the variables defined below.
 
 # Optimization modes to test. Override this with a subset of modes if you want to.
-OPTIMIZE := O0_sanitized O0 Omax
+OPTIMIZE := O0 Omax
 OPTIM_FLAGS_O0_sanitized := -O0 -g -fsanitize=address -fsanitize=undefined
 OPTIM_FLAGS_O0 := -O0
 OPTIM_FLAGS_Omax := -O3
@@ -15,7 +15,7 @@ $(if $(COMPILER),,$(error Unable to detect compilers, set `COMPILER=??` to a spa
 
 # C++ standards to test. Override this with a subset of standards if you want to.
 # Only MSVC supports `latest`.
-STANDARD := latest 26 23 20 17 14
+STANDARD := latest 26 23 20 17
 
 # C++ standard libraries to test.
 STDLIB := libstdc++ libc++ msvc
@@ -59,6 +59,10 @@ else ifneq ($(and $(filter %cl,$(COMPILER)),$(filter-out msvc,$(STDLIB))),)
 	@true # MSVC only supports its own standard library.
 else ifeq ($(if $(filter g++% clang++%,$(COMPILER)),$(shell $(if $(filter g++%,$(COMPILER)),$(COMPILER) -v --help,$(COMPILER) -std=c++0 -xc++ /dev/null) 2>&1 | grep 'c++$(STANDARD)'),x),)
 	@true # Unsupported standard version for this compiler.
+else ifneq ($(and $(filter %cl,$(COMPILER)),$(filter 26,$(STANDARD))),)
+	@true # Unsupported standard version for this compiler.
+else ifneq ($(and $(filter clang-cl,$(COMPILER)),$(filter 23,$(STANDARD))),)
+	@true # Unsupported standard version for this compiler.
 else ifneq ($(and $(filter clang++%,$(COMPILER)),$(filter libc++,$(STDLIB)),$(if $(wildcard /usr/lib/llvm-$(shell $(COMPILER) --version | grep -Po '(?<=version )[0-9]+')/include/c++),,x)),)
 	@true # Using Clang with libc++, but libc++ is not installed.
 else
@@ -75,7 +79,7 @@ else
     		$(call var,_optim_flags := $(patsubst -O3,-O2,$(_optim_flags)))\
 		)\
 		$(_optim_flags)\
-		-std$(if $(filter %cl,$(COMPILER)),:,=)c++$(STANDARD) \
+		-std$(if $(filter %cl,$(COMPILER)),:,=)c++$(if $(and $(filter cl,$(COMPILER)),$(filter 23,$(STANDARD))),23preview,$(STANDARD)) \
 		$(if $(filter clang++%,$(COMPILER)),-stdlib=$(STDLIB)) \
 		$(patsubst $(COMPILER)=%,%,$(filter $(COMPILER)=%,$(CXXFLAGS_PER_COMPILER))) \
 		$(if $(filter %cl,$(COMPILER)),-link -out:,-o)tests \

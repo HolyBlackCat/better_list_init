@@ -19,12 +19,8 @@ including containers of non-copyable elements, which otherwise don't support `st
   * [Range vs non-range initialization](#range-vs-non-range-initialization)
   * [More on range initialization](#more-on-range-initialization)
   * [`.begin()`/`.end()`](#beginend)
-* [Notes on compatibility](#notes-on-compatibility)
-  * [MSVC and the allocator hack](#msvc-and-the-allocator-hack)
-  * [C++14](#c14)
 * [Using better_list_init in your own libraries](#using-better_list_init-in-your-own-libraries)
   * [The stable API](#the-stable-api)
-  * [Supporting C++14](#supporting-c14)
 
 </p>
 </details>
@@ -115,7 +111,7 @@ Just clone the repository, add the `include` directory to the header search path
 
 To improve the build times, avoid using `init{...}` when it doesn't bring any benefit, i.e. with types that don't benefit from being moved (and are copyable), such as scalars, especially large arrays thereof.
 
-We currently test on Clang 13+, GCC 9+, and MSVC v19.33, though earlier compiler versions might work as well. At least C++17 is recommended, but C++14 is supported [with some caveats](#c14).
+We currently test on Clang 13+, GCC 9+, and MSVC v19.33, though earlier compiler versions might work as well. At least C++17 is required.
 
 If you don't like `init` in the global namespace, you can spell it as `better_list_init::init`, and disable the short spelling by compiling with `-DBETTERLISTINIT_SHORTHAND=0` (or by creating a file called `better_list_init_config.hpp` with `#define BETTERLISTINIT_SHORTHAND 0` in it, in a directory where `#include "..."` can find it).
 
@@ -130,8 +126,6 @@ Those are custom iterators that deference to the provided initializers. The iter
 A longer explanation is provided below.
 
 ## A detailed explanation
-
-<sup>This describes behavior in C++17 and newer. C++14 has some quirks, see [C++14 compatibility](#supporting-c14).</sup>
 
 ### The nature of `init`
 
@@ -176,91 +170,6 @@ Homogeneous list iterators dereference to its homogeneous type. Heterogeneous li
 Homogeneous lists expose `.begin()` and `.end()` as member functions. The iterators are random-access and dereference to the homogeneous type. Those are the same iterators that are used when constructing ranges.
 
 Note that like all other member functions, `.begin()` and `.end()` become `&&`-qualified if the list contains at least one rvalue.
-
-## Notes on compatibility
-
-### MSVC and the allocator hack
-
-MSVC is supported. MSVC v19.33 and earlier [have a bug](https://github.com/microsoft/STL/issues/2620) in C++20 mode and newer, which we work around with a hack.
-
-Without the workaround, the bug prevents certain initialization scenarios, described below. The workaround fixes most of them (but not in `constexpr` contexts).
-
-If the workaround causes problems, it can be disabled by defining `BETTERLISTINIT_ALLOCATOR_HACK` to `0`. You can also tweak it for specific types by specializing templates in `namespace allocator_hack`.
-
-The workaround involves `reinterpret_cast`ing the container to a different type with a modified allocator type. The hack only works if the allocator type can be found in the template arguments (possibly nested) of the container type. Otherwise it doesn't do anything, and you get a compilation error.
-
-Note that, as far as I know, MSVC doesn't do strict-aliasing-based optimizations, so a careful `reinterpret_cast` should be safe. Since the hack is automatically disabled in newer MSVC versions, this shouldn't create problems in the future. In any case, there's a macro customization point that lets you inject something like `__attribute__((__may_alias__))` (if MSVC ever gets something like it), and in fact we already use it to test the allocator hack on other compilers.
-
-The nature of the bug is that `std::construct_at()` (and by extension `std::allocator_traits<...>::construct()` of any allocator that doesn't define a custom `.constuct()` that doesn't rely on `std::construct_at()`, e.g. `std::allocator`) causes a SFINAE error when it's used to construct a non-movable type A from a type B that defines `operator A`. This is as if the mandatory copy elision wasn't considered. This doesn't necessarily mean that the mandatory copy elision doesn't happen in `std::construct_at`; only the SFINAE seems to be bugged and not the implementation.
-
-For us, this breaks initialization of a container with a non-move-constructible element type<sup>1</sup> **if** `init{...}` is heterogeneous<sup>2</sup> or contains nested `init{...}` lists (or in general objects with a conversion `operator` to the element type).
-
-> <sup>1</sup> Notably this includes maps with non-copyable keys, since the keys end up const and can't be moved.
->
-> <sup>2</sup> That is, contains expressions of different types, e.g. `init{int(1), short(2)}` is heterogeneous, but `init{int(1), int(2)}` is not. An empty `init{}` is heterogeneous.
-
-You can check at compile-time if the workaround is being used:
-```cpp
-// This is false if your compiler and its version look like they shouldn't be affected.
-#if BETTERLISTINIT_ALLOCATOR_HACK
-// This is false if a compile-time test has determined that you're somehow not affected.
-if constexpr (better_list_init::detail::allocator_hack::enabled::value)
-{
-    // The hack is used.
-}
-#endif
-```
-
-### C++14
-
-We support C++14 with some caveats:
-
-* The syntax changes from `init{...}` to `init(...)`.
-
-  Parentheses are supported in C++17+ too, but the braces should be preferred, because they look prettier, and because like everywhere else in C++, braces force the initializers to be evaluated left-to-right, while in parentheses the evaluation order is unspecified.
-
-* Containers of non-movable types can only be initialized with homogeneous lists.<br/>
-  (That is, all elements in `init(...)` must have the same type, and there must be at least one element.)
-
-  E.g. `std::vector<std::atomic_int> a = init(1, 2);` is ok, but `= init(short(1), 2)` is not.
-
-  This notably includes maps with non-copyable keys, since the keys end up const and can't be moved.
-
-* Containers of non-movable types can't be initialized with nested `init(...)` lists.
-
-  This, again, notably includes maps with non-copyable keys, since the keys end up const and can't be moved.
-
-  For maps, you can use `std::make_pair()` instead of the nested `init(...)` lists, but note that it stores the elements by value, adding extra moves. You can use pairs of references to avoid those.
-
-  The reason for this limitation is that a nested `init(...)` list tries to construct the element of the enclosing container, which involves returning it from `operator T` by value, which, in absence of the mandatory copy elision, requires a move constructor.
-
-## Using better_list_init in your own libraries
-
-This primarily affects header-only libraries, or the libraries that are intended to be utilized directly as .cpp files, as opposed to being precompiled.
-
-### The stable API
-
-Don't spell `init` directly (even in a qualified way), since it can be renamed by the user with a configuration macro (`BETTER_INIT_IDENTIFIER`).
-
-Instead of `init` and `better_list_init::init`, use `BETTERLISTINIT_INIT`.
-
-Instead of `better_list_init::type::init`, use `BETTERLISTINIT_TYPE`.
-
-### Supporting C++14
-
-Normally `init` and `better_list_init::init` are aliases for the class template `better_list_init::type::init`.
-
-But in C++14, since we don't have CTAD, `init` and `better_list_init::init` are instead a function that returns a specialization of `better_list_init::type::init`.
-
-Because of that:
-
-* Use `init(...)` instead of `init{...}`, since functions can't be called with braces. (Or rather, `BETTERLISTINIT_INIT(...)`.)
-
-  * Keep in mind that, as everywhere else in C++, the order of evaluation of parenthesized arguments is unspecified, while the braced elements are evaluated left-to-right.
-
-* If you need to refer to the type, spell it as `better_list_init::type::init`. (Or rather, `BETTERLISTINIT_TYPE`.)
-
-* C++14 doesn't have `std::is_aggregate` (no kidding). We consider `std::array` to be the only aggregate, **but** this only matters if the type also has a `::value_type` typedef. So if you want to initialize an aggregate that has this typedef, specialize `better_list_init::details::is_aggregate` for it.
 
 
   [1]: https://godbolt.org/#g:!((g:!((g:!((h:codeEditor,i:(filename:'1',fontScale:14,fontUsePx:'0',j:1,lang:c%2B%2B,selection:(endColumn:1,endLineNumber:21,positionColumn:1,positionLineNumber:21,selectionStartColumn:1,selectionStartLineNumber:21,startColumn:1,startLineNumber:21),source:'%23include+%3Chttps://raw.githubusercontent.com/HolyBlackCat/better_list_init/master/include/better_list_init.hpp%3E%0A%0A%23include+%3Catomic%3E%0A%23include+%3Ciostream%3E%0A%23include+%3Cmemory%3E%0A%23include+%3Cvector%3E%0A%0Aint+main()%0A%7B%0A++++//+std::vector%3Cstd::unique_ptr%3Cint%3E%3E+foo+%3D+%7Bnullptr,+std::make_unique%3Cint%3E(42)%7D%3B%0A++++std::vector%3Cstd::unique_ptr%3Cint%3E%3E+foo+%3D+init%7Bnullptr,+std::make_unique%3Cint%3E(42)%7D%3B%0A++++std::cout+%3C%3C+foo.at(0)+%3C%3C+!'%5Cn!'%3B%0A++++std::cout+%3C%3C+foo.at(1)+%3C%3C+%22+-%3E+%22+%3C%3C+*foo.at(1)+%3C%3C+!'%5Cn!'%3B%0A++++std::cout+%3C%3C+!'%5Cn!'%3B%0A++++%0A++++//+std::vector%3Cstd::atomic_int%3E+bar+%3D+%7B1,+2,+3%7D%3B%0A++++std::vector%3Cstd::atomic_int%3E+bar+%3D+init%7B1,+2,+3%7D%3B%0A++++for+(const+auto+%26elem+:+bar)%0A++++++++std::cout+%3C%3C+elem.load()+%3C%3C+!'%5Cn!'%3B%0A%7D%0A'),l:'5',n:'0',o:'C%2B%2B+source+%231',t:'0')),k:50.6226993728496,l:'4',n:'0',o:'',s:0,t:'0'),(g:!((g:!((h:compiler,i:(compiler:clang1500,deviceViewOpen:'1',filters:(b:'0',binary:'1',commentOnly:'0',demangle:'0',directives:'0',execute:'0',intel:'1',libraryCode:'1',trim:'0'),flagsViewOpen:'1',fontScale:14,fontUsePx:'0',j:1,lang:c%2B%2B,libs:!(),options:'-std%3Dc%2B%2B20+-Wall+-Wextra+-pedantic-errors+-g+-fsanitize%3Dundefined,address+-D_GLIBCXX_DEBUG+-Wno-pragma-once-outside-header',selection:(endColumn:1,endLineNumber:1,positionColumn:1,positionLineNumber:1,selectionStartColumn:1,selectionStartLineNumber:1,startColumn:1,startLineNumber:1),source:1),l:'5',n:'0',o:'+x86-64+clang+15.0.0+(Editor+%231)',t:'0')),header:(),k:31.394545063431934,l:'4',m:50,n:'0',o:'',s:0,t:'0'),(g:!((h:output,i:(compilerName:'x86-64+gcc+(trunk)',editorid:1,fontScale:14,fontUsePx:'0',j:1,wrap:'1'),l:'5',n:'0',o:'Output+of+x86-64+clang+15.0.0+(Compiler+%231)',t:'0')),header:(),l:'4',m:50,n:'0',o:'',s:0,t:'0')),k:48.95267217704424,l:'3',n:'0',o:'',t:'0')),l:'2',n:'0',o:'',t:'0')),version:4

@@ -4,59 +4,6 @@
 // Or paste `better_list_init.hpp`, followed by this file.
 
 
-// Some code to emulate the MSVC's broken `std::construct_at()` on compilers other than MSVC.
-// Our emulation appears to be weaker than the actual bug (doesn't trigger in all cases).
-// Enable this and observe compile-time errors:
-//     make STDLIB=libstdc++ STANDARD=20 CXXFLAGS='-DBREAK_CONSTRUCT_AT'
-// Disable the respective tests and observe the lack of errors:
-//     make STDLIB=libstdc++ STANDARD=20 CXXFLAGS='-DBREAK_CONSTRUCT_AT -DCONTAINERS_HAVE_MANDATORY_COPY_ELISION=0'
-// Enable the allocator hack and observe the lack of errors:
-//     make STDLIB=libstdc++ STANDARD=20 CXXFLAGS='-DBREAK_CONSTRUCT_AT -DBETTERLISTINIT_ALLOCATOR_HACK=2'
-#if BREAK_CONSTRUCT_AT
-// This has to be above all the includes, to correctly perform the override.
-
-// Make sure we either don't use the allocator hack at all, or force-enable it,
-//   since the compile-time test to conditionally enable it doesn't work
-//   with our broken `std::construct_at()`, since we can't make it SFIANE-friendly.
-#if BETTERLISTINIT_ALLOCATOR_HACK == 1
-#error "Our broken `std::construct_at()` is not SFINAE-friendly, it doesn't work with `BETTERLISTINIT_ALLOCATOR_HACK == 1`. Set it to 2."
-#endif
-// Include something to identify the standard library,
-// but without calling `std::construct_at` before we break it.
-#include <version>
-#ifdef __GLIBCXX__
-namespace std _GLIBCXX_VISIBILITY(default)
-{
-    namespace better_list_init
-    {
-        template <typename T> T &&declval();
-    }
-
-    _GLIBCXX_BEGIN_NAMESPACE_VERSION
-    template <typename T, typename U>
-    constexpr auto construct_at(T *ptr, U &&param)
-    noexcept(noexcept(::new((void *)nullptr) T(better_list_init::declval<U>())))
-    -> decltype(::new((void *)nullptr) T(better_list_init::declval<U>()))
-    {
-        // .-- Check that the allocator hack didn't call this on a non-movable type.
-        // v   We can't make this SFINAE-friendly, because then we'd just fall back to the stock `std::construct_at()`.
-        static_assert(!(
-            // If `T` is not move-constructible, and
-            !requires{T(better_list_init::declval<T &&>());} &&
-            // if `U::operator T()` is a thing.
-            requires{param.operator T();}
-        ), "Emulated `std::construct_at` bug!");
-        return ::new((void*)ptr) T(static_cast<U &&>(param));
-    }
-    _GLIBCXX_END_NAMESPACE_VERSION
-}
-#else
-// Note: there's no implementation for libc++ because the allocator hack doesn't work there anyway. See the comments on `BETTERLISTINIT_ALLOCATOR_HACK`.
-#error "Don't know how to break `std::construct_at` for this standard library."
-#endif
-#endif
-
-
 #ifndef BETTERLISTINIT_CONFIG // This lets us run tests on godbolt easier, see below.
 #include "better_list_init.hpp"
 #endif
@@ -74,33 +21,6 @@ namespace std _GLIBCXX_VISIBILITY(default)
 #include <utility>
 #include <vector>
 
-
-// Expands to the preferred init list notation for the current language standard.
-#if BETTERLISTINIT_ALLOW_BRACES
-#define INIT(...) BETTERLISTINIT_INIT{__VA_ARGS__}
-#else
-#define INIT(...) BETTERLISTINIT_INIT(__VA_ARGS__)
-#endif
-
-
-// Whether we have the mandatory copy elision.
-#ifndef LANG_HAS_MANDATORY_COPY_ELISION
-#if BETTERLISTINIT_CXX_STANDARD >= 17
-#define LANG_HAS_MANDATORY_COPY_ELISION 1
-#else
-#define LANG_HAS_MANDATORY_COPY_ELISION 0
-#endif
-#endif
-
-// Whether we have the mandatory copy elision (and no bugged `std::consturct_at()`) OR the allocator hack.
-#ifndef CONTAINERS_HAVE_MANDATORY_COPY_ELISION
-// Work around MSVC issue https://github.com/microsoft/STL/issues/2620, which breaks mandatory copy elision in C++20 mode.
-#if BETTERLISTINIT_ALLOCATOR_HACK || (BETTERLISTINIT_CXX_STANDARD >= 17 && (!defined(_MSC_VER) || _MSC_VER > 1933 || BETTERLISTINIT_CXX_STANDARD < 20))
-#define CONTAINERS_HAVE_MANDATORY_COPY_ELISION 1
-#else
-#define CONTAINERS_HAVE_MANDATORY_COPY_ELISION 0
-#endif
-#endif
 
 
 #define ASSERT(...) \
@@ -132,14 +52,14 @@ struct HasBeginEnd<T, decltype(void(std::declval<T>().begin()), void(std::declva
 // Get a `init<P...>` value from element types.
 // Causes UB when called, intended only to instantiate templates.
 template <typename ...P>
-better_list_init::type::BETTERLISTINIT_IDENTIFIER<P...> &&invalid_init_list()
+better_list_init::init<P...> &&invalid_init_list()
 {
     #ifdef __GNUC__
     #pragma GCC diagnostic push
     #pragma GCC diagnostic ignored "-Wstrict-aliasing"
     #endif
     static int dummy;
-    return reinterpret_cast<better_list_init::type::BETTERLISTINIT_IDENTIFIER<P...> &&>(dummy);
+    return reinterpret_cast<better_list_init::init<P...> &&>(dummy);
     #ifdef __GNUC__
     #pragma GCC diagnostic pop
     #endif
@@ -167,9 +87,9 @@ better_list_init::type::BETTERLISTINIT_IDENTIFIER<P...> &&invalid_init_list()
 
 // Try to explicitly instantiate the types from `CHECKED_LIST_TYPES`.
 #define CHECK_INSTANTIATION(target_, ...) \
-    template class better_list_init::type::BETTERLISTINIT_IDENTIFIER<__VA_ARGS__>; \
-    template class better_list_init::type::BETTERLISTINIT_IDENTIFIER<__VA_ARGS__>::elem_iter<target_>; \
-    template class better_list_init::type::BETTERLISTINIT_IDENTIFIER<__VA_ARGS__>::elem_ref<target_>;
+    template class better_list_init::init<__VA_ARGS__>; \
+    template class better_list_init::init<__VA_ARGS__>::elem_iter<target_>; \
+    template class better_list_init::init<__VA_ARGS__>::elem_ref<target_>;
 CHECKED_LIST_TYPES(CHECK_INSTANTIATION)
 #undef CHECK_INSTANTIATION
 
@@ -182,7 +102,7 @@ struct IteratorCategoryChecker
     template <typename U>
     IteratorCategoryChecker(U, U)
     {
-        #if BETTERLISTINIT_CXX_STANDARD >= 20
+        #ifdef __cpp_lib_ranges
         static_assert(std::random_access_iterator<U>, "The iterator concept wasn't satisfied.");
         #endif
         static_assert(std::is_same<typename std::iterator_traits<U>::iterator_category, std::random_access_iterator_tag>::value, "Wrong iterator category.");
@@ -316,62 +236,60 @@ struct ConstexprRange
 int main()
 {
     // Iterator sanity tests.
-    (void)IteratorSanityChecker(INIT(1, 2, 3));
+    (void)IteratorSanityChecker(init{1, 2, 3});
 
     { // Generic usage tests.
-        std::vector<std::unique_ptr<int>> vec1 = INIT(std::unique_ptr<int>(), std::make_unique<int>(42));
+        std::vector<std::unique_ptr<int>> vec1 = init{std::unique_ptr<int>(), std::make_unique<int>(42)};
         ASSERT_EQ(vec1.size(), 2);
         ASSERT(vec1[0] == nullptr);
         ASSERT(vec1[1] != nullptr && *vec1[1] == 42);
 
-        std::vector<std::unique_ptr<int>> vec2 = INIT(nullptr, std::make_unique<int>(42));
+        std::vector<std::unique_ptr<int>> vec2 = init{nullptr, std::make_unique<int>(42)};
         ASSERT(vec2[0] == nullptr);
         ASSERT(vec2[1] != nullptr && *vec2[1] == 42);
 
-        std::vector<std::unique_ptr<int>> vec3 = INIT(nullptr);
+        std::vector<std::unique_ptr<int>> vec3 = init{nullptr};
         ASSERT_EQ(vec3.size(), 1);
         ASSERT(vec3[0] == nullptr);
 
-        std::vector<std::unique_ptr<int>> vec4 = INIT();
+        std::vector<std::unique_ptr<int>> vec4 = init{};
         ASSERT(vec4.empty());
 
         // Even without mandatory copy elision, homogeneous lists of non-movable types are fine.
-        std::vector<std::atomic_int> vec5 = INIT(1, 2, 3);
+        std::vector<std::atomic_int> vec5 = init{1, 2, 3};
         ASSERT_EQ(vec5.size(), 3);
         ASSERT_EQ(vec5[0].load(), 1);
         ASSERT_EQ(vec5[1].load(), 2);
         ASSERT_EQ(vec5[2].load(), 3);
 
-        #if CONTAINERS_HAVE_MANDATORY_COPY_ELISION
         // Empty lists count as hetergeneous, thus require mandatory copy elision.
-        std::vector<std::atomic_int> vec6 = INIT();
+        std::vector<std::atomic_int> vec6 = init{};
         ASSERT(vec6.empty());
 
         int a = 5;
         const int b = 6;
-        std::vector<std::atomic_int> vec7 = INIT(4, a, b);
+        std::vector<std::atomic_int> vec7 = init{4, a, b};
         ASSERT_EQ(vec7.size(), 3);
         ASSERT_EQ(vec7[0].load(), 4);
         ASSERT_EQ(vec7[1].load(), 5);
         ASSERT_EQ(vec7[2].load(), 6);
-        #endif
     }
 
     { // Explicit initialization.
         // Double parentheses, because GCC 11 becomes confused otherwise. Most probably a bug?
-        std::vector<std::unique_ptr<int>> vec1((INIT(nullptr, std::make_unique<int>(42))));
+        std::vector<std::unique_ptr<int>> vec1((init{nullptr, std::make_unique<int>(42)}));
         ASSERT_EQ(vec1.size(), 2);
         ASSERT(vec1[0] == nullptr);
         ASSERT(vec1[1] != nullptr && *vec1[1] == 42);
     }
 
     { // Initialization with extra arguments.
-        std::vector<std::unique_ptr<int>> vec1 = INIT(nullptr, std::make_unique<int>(42)).and_with(std::allocator<std::unique_ptr<int>>{});
+        std::vector<std::unique_ptr<int>> vec1 = init{nullptr, std::make_unique<int>(42)}.and_with(std::allocator<std::unique_ptr<int>>{});
         ASSERT_EQ(vec1.size(), 2);
         ASSERT(vec1[0] == nullptr);
         ASSERT(vec1[1] != nullptr && *vec1[1] == 42);
 
-        std::vector<std::atomic_int> vec2 = INIT(1, 2, 3).and_with(std::allocator<std::unique_ptr<int>>{});
+        std::vector<std::atomic_int> vec2 = init{1, 2, 3}.and_with(std::allocator<std::unique_ptr<int>>{});
         ASSERT_EQ(vec2.size(), 3);
         ASSERT_EQ(vec2[0].load(), 1);
         ASSERT_EQ(vec2[1].load(), 2);
@@ -379,41 +297,38 @@ int main()
     }
 
     { // Non-range initialization.
-        std::array<std::unique_ptr<int>, 2> arr1 = INIT(std::unique_ptr<int>(), std::make_unique<int>(42));
+        std::array<std::unique_ptr<int>, 2> arr1 = init{std::unique_ptr<int>(), std::make_unique<int>(42)};
         ASSERT(arr1[0] == nullptr);
         ASSERT(arr1[1] != nullptr && *arr1[1] == 42);
 
-        std::array<std::unique_ptr<int>, 2> arr2 = INIT(nullptr, std::make_unique<int>(42));
+        std::array<std::unique_ptr<int>, 2> arr2 = init{nullptr, std::make_unique<int>(42)};
         ASSERT(arr2[0] == nullptr);
         ASSERT(arr2[1] != nullptr && *arr2[1] == 42);
 
-        std::array<std::unique_ptr<int>, 2> arr3 = INIT(std::make_unique<int>(43));
+        std::array<std::unique_ptr<int>, 2> arr3 = init{std::make_unique<int>(43)};
         ASSERT(arr3[0] != nullptr && *arr3[0] == 43);
         ASSERT(arr3[1] == nullptr);
 
-        std::array<std::unique_ptr<int>, 0> arr4 = INIT();
+        std::array<std::unique_ptr<int>, 0> arr4 = init{};
         (void)arr4;
 
         // The lists being homogeneous doesn't help us here, because we need to elide the move for the whole `std::array`.
-        // The bugged `std::construct_at()` doesn't affect this, and the allocator hack doesn't help here.
-        #if LANG_HAS_MANDATORY_COPY_ELISION
-        std::array<std::atomic_int, 3> arr5 = INIT(1, 2, 3);
+        std::array<std::atomic_int, 3> arr5 = init{1, 2, 3};
         ASSERT_EQ(arr5[0].load(), 1);
         ASSERT_EQ(arr5[1].load(), 2);
         ASSERT_EQ(arr5[2].load(), 3);
 
-        std::array<std::atomic_int, 0> arr6 = INIT();
+        std::array<std::atomic_int, 0> arr6 = init{};
         (void)arr6;
-        #endif
     }
 
     { // Maps.
         { // From lists of pairs.
             // Homogeneous lists.
-            std::map<std::unique_ptr<int>, std::unique_ptr<float>> map1 = INIT(
+            std::map<std::unique_ptr<int>, std::unique_ptr<float>> map1 = init{
                 std::make_pair(std::make_unique<int>(1), std::make_unique<float>(2.3f)),
-                std::make_pair(std::make_unique<int>(2), std::make_unique<float>(3.4f))
-            );
+                std::make_pair(std::make_unique<int>(2), std::make_unique<float>(3.4f)),
+            };
             ASSERT_EQ(map1.size(), 2);
             for (const auto &elem : map1)
             {
@@ -423,10 +338,10 @@ int main()
                     ASSERT_EQ(*elem.second, 3.4f);
             }
 
-            std::map<std::atomic_int, std::atomic_int> map2 = INIT(
+            std::map<std::atomic_int, std::atomic_int> map2 = init{
                 std::make_pair(1, 2),
-                std::make_pair(3, 4)
-            );
+                std::make_pair(3, 4),
+            };
             ASSERT_EQ(map2.size(), 2);
             ASSERT_EQ(map2.at(1).load(), 2);
             ASSERT_EQ(map2.at(3).load(), 4);
@@ -434,19 +349,18 @@ int main()
             // Heterogeneous lists.
             // For maps, the key is never movable (because the first template argument of the pair is const),
             // so we need the mandatory copy elision if the key is not copyable (or if the value is not movable, of course).
-            std::map<int, std::unique_ptr<float>> map3 = INIT(
+            std::map<int, std::unique_ptr<float>> map3 = init{
                 std::make_pair(short(1), std::make_unique<float>(2.3f)),
-                std::make_pair(2, std::make_unique<float>(3.4f))
-            );
+                std::make_pair(2, std::make_unique<float>(3.4f)),
+            };
             ASSERT_EQ(map3.size(), 2);
             ASSERT_EQ(*map3.at(1), 2.3f);
             ASSERT_EQ(*map3.at(2), 3.4f);
 
-            #if CONTAINERS_HAVE_MANDATORY_COPY_ELISION
-            std::map<std::unique_ptr<int>, std::unique_ptr<float>> map4 = INIT(
+            std::map<std::unique_ptr<int>, std::unique_ptr<float>> map4 = init{
                 std::make_pair(nullptr, std::make_unique<float>(2.3f)),
-                std::make_pair(std::make_unique<int>(2), std::make_unique<float>(3.4f))
-            );
+                std::make_pair(std::make_unique<int>(2), std::make_unique<float>(3.4f)),
+            };
             ASSERT_EQ(map4.size(), 2);
             for (const auto &elem : map4)
             {
@@ -461,14 +375,13 @@ int main()
                 }
             }
 
-            std::map<std::atomic_int, std::atomic_int> map5 = INIT(
+            std::map<std::atomic_int, std::atomic_int> map5 = init{
                 std::make_pair(short(1), 2),
                 std::make_pair(3, 4)
-            );
+            };
             ASSERT_EQ(map5.size(), 2);
             ASSERT_EQ(map5.at(1).load(), 2);
             ASSERT_EQ(map5.at(3).load(), 4);
-            #endif
         }
 
         { // From lists of lists.
@@ -477,11 +390,10 @@ int main()
             // from a list requires mandatory copy elision, because we need to return it from a function.
 
             // Homogeneous lists.
-            #if CONTAINERS_HAVE_MANDATORY_COPY_ELISION
-            std::map<std::unique_ptr<int>, std::unique_ptr<float>> map1 = INIT(
-                INIT(std::make_unique<int>(1), std::make_unique<float>(2.3f)),
-                INIT(std::make_unique<int>(2), std::make_unique<float>(3.4f))
-            );
+            std::map<std::unique_ptr<int>, std::unique_ptr<float>> map1 = init{
+                init{std::make_unique<int>(1), std::make_unique<float>(2.3f)},
+                init{std::make_unique<int>(2), std::make_unique<float>(3.4f)},
+            };
             ASSERT_EQ(map1.size(), 2);
             for (const auto &elem : map1)
             {
@@ -491,31 +403,29 @@ int main()
                     ASSERT_EQ(*elem.second, 3.4f);
             }
 
-            std::map<std::atomic_int, std::atomic_int> map2 = INIT(
-                INIT(1, 2),
-                INIT(3, 4)
-            );
+            std::map<std::atomic_int, std::atomic_int> map2 = init{
+                init{1, 2},
+                init{3, 4},
+            };
             ASSERT_EQ(map2.size(), 2);
             ASSERT_EQ(map2.at(1).load(), 2);
             ASSERT_EQ(map2.at(3).load(), 4);
-            #endif
 
             // Heterogeneous lists.
 
             // Here the map key type is copyable, so we don't need the mandatory copy elision.
-            std::map<int, std::unique_ptr<float>> map3 = INIT(
-                INIT(short(1), std::make_unique<float>(2.3f)),
-                INIT(2, std::make_unique<float>(3.4f))
-            );
+            std::map<int, std::unique_ptr<float>> map3 = init{
+                init{short(1), std::make_unique<float>(2.3f)},
+                init{2, std::make_unique<float>(3.4f)},
+            };
             ASSERT_EQ(map3.size(), 2);
             ASSERT_EQ(*map3.at(1), 2.3f);
             ASSERT_EQ(*map3.at(2), 3.4f);
 
-            #if CONTAINERS_HAVE_MANDATORY_COPY_ELISION
-            std::map<std::unique_ptr<int>, std::unique_ptr<float>> map4 = INIT(
-                INIT(nullptr, std::make_unique<float>(2.3f)),
-                INIT(std::make_unique<int>(2), std::make_unique<float>(3.4f))
-            );
+            std::map<std::unique_ptr<int>, std::unique_ptr<float>> map4 = init{
+                init{nullptr, std::make_unique<float>(2.3f)},
+                init{std::make_unique<int>(2), std::make_unique<float>(3.4f)},
+            };
             ASSERT_EQ(map4.size(), 2);
             for (const auto &elem : map4)
             {
@@ -530,26 +440,25 @@ int main()
                 }
             }
 
-            std::map<std::atomic_int, std::atomic_int> map6 = INIT(
-                INIT(short(1), 2),
-                INIT(3, 4)
-            );
+            std::map<std::atomic_int, std::atomic_int> map6 = init{
+                init{short(1), 2},
+                init{3, 4},
+            };
             ASSERT_EQ(map6.size(), 2);
             ASSERT_EQ(map6.at(1).load(), 2);
             ASSERT_EQ(map6.at(3).load(), 4);
-            #endif
         }
     }
 
     { // Sets.
         // The sets are special, because they have const elements.
-        std::set<int> set1 = INIT(1, 2, 3);
+        std::set<int> set1 = init{1, 2, 3};
         ASSERT_EQ(set1.size(), 3);
         ASSERT(set1.count(1));
         ASSERT(set1.count(2));
         ASSERT(set1.count(3));
 
-        std::set<std::atomic_int> set2 = INIT(1, 2, 3);
+        std::set<std::atomic_int> set2 = init{1, 2, 3};
         ASSERT_EQ(set2.size(), 3);
         ASSERT(set2.count(1));
         ASSERT(set2.count(2));
@@ -558,49 +467,49 @@ int main()
 
     { // Explicit and implicit construction.
         // Range, explicit constructor.
-        static_assert(!std::is_convertible<decltype(INIT(1, 2)), ExplicitRange>::value, "");
-        static_assert(std::is_constructible<ExplicitRange, decltype(INIT(1, 2))>::value, "");
-        static_assert(!std::is_convertible<decltype(INIT(1, 2).and_with(1, 2, 3)), ExplicitRange>::value, "");
-        static_assert(!std::is_constructible<ExplicitRange, decltype(INIT(1, 2).and_with(1, 2, 3))>::value, "");
+        static_assert(!std::is_convertible<decltype(init{1, 2}), ExplicitRange>::value, "");
+        static_assert(std::is_constructible<ExplicitRange, decltype(init{1, 2})>::value, "");
+        static_assert(!std::is_convertible<decltype(init{1, 2}.and_with(1, 2, 3)), ExplicitRange>::value, "");
+        static_assert(!std::is_constructible<ExplicitRange, decltype(init{1, 2}.and_with(1, 2, 3))>::value, "");
 
         // Range, implicit constructor.
-        static_assert(std::is_convertible<decltype(INIT(1, 2)), ImplicitRange>::value, "");
-        static_assert(std::is_constructible<ImplicitRange, decltype(INIT(1, 2))>::value, "");
-        static_assert(!std::is_convertible<decltype(INIT(1, 2).and_with(1, 2, 3)), ImplicitRange>::value, "");
-        static_assert(!std::is_constructible<ImplicitRange, decltype(INIT(1, 2).and_with(1, 2, 3))>::value, "");
+        static_assert(std::is_convertible<decltype(init{1, 2}), ImplicitRange>::value, "");
+        static_assert(std::is_constructible<ImplicitRange, decltype(init{1, 2})>::value, "");
+        static_assert(!std::is_convertible<decltype(init{1, 2}.and_with(1, 2, 3)), ImplicitRange>::value, "");
+        static_assert(!std::is_constructible<ImplicitRange, decltype(init{1, 2}.and_with(1, 2, 3))>::value, "");
 
         // Range with extra args, explicit constructor.
-        static_assert(!std::is_convertible<decltype(INIT(1, 2)), ExplicitRangeWithArgs>::value, "");
-        static_assert(!std::is_constructible<ExplicitRangeWithArgs, decltype(INIT(1, 2))>::value, "");
-        static_assert(!std::is_convertible<decltype(INIT(1, 2).and_with(1, 2, 3)), ExplicitRangeWithArgs>::value, "");
-        static_assert(std::is_constructible<ExplicitRangeWithArgs, decltype(INIT(1, 2).and_with(1, 2, 3))>::value, "");
+        static_assert(!std::is_convertible<decltype(init{1, 2}), ExplicitRangeWithArgs>::value, "");
+        static_assert(!std::is_constructible<ExplicitRangeWithArgs, decltype(init{1, 2})>::value, "");
+        static_assert(!std::is_convertible<decltype(init{1, 2}.and_with(1, 2, 3)), ExplicitRangeWithArgs>::value, "");
+        static_assert(std::is_constructible<ExplicitRangeWithArgs, decltype(init{1, 2}.and_with(1, 2, 3))>::value, "");
 
         // Range with extra args, implicit constructor.
-        static_assert(!std::is_convertible<decltype(INIT(1, 2)), ImplicitRangeWithArgs>::value, "");
-        static_assert(!std::is_constructible<ImplicitRangeWithArgs, decltype(INIT(1, 2))>::value, "");
-        static_assert(std::is_convertible<decltype(INIT(1, 2).and_with(1, 2, 3)), ImplicitRangeWithArgs>::value, "");
-        static_assert(std::is_constructible<ImplicitRangeWithArgs, decltype(INIT(1, 2).and_with(1, 2, 3))>::value, "");
+        static_assert(!std::is_convertible<decltype(init{1, 2}), ImplicitRangeWithArgs>::value, "");
+        static_assert(!std::is_constructible<ImplicitRangeWithArgs, decltype(init{1, 2})>::value, "");
+        static_assert(std::is_convertible<decltype(init{1, 2}.and_with(1, 2, 3)), ImplicitRangeWithArgs>::value, "");
+        static_assert(std::is_constructible<ImplicitRangeWithArgs, decltype(init{1, 2}.and_with(1, 2, 3))>::value, "");
 
         // Non-range, explicit constructor.
-        static_assert(!std::is_convertible<decltype(INIT(1, 2)), ExplicitNonRange>::value, "");
-        static_assert(std::is_constructible<ExplicitNonRange, decltype(INIT(1, 2))>::value, "");
-        static_assert(!std::is_convertible<decltype(INIT(1, 2).and_with(1, 2, 3)), ExplicitNonRange>::value, "");
-        static_assert(!std::is_constructible<ExplicitNonRange, decltype(INIT(1, 2).and_with(1, 2, 3))>::value, "");
+        static_assert(!std::is_convertible<decltype(init{1, 2}), ExplicitNonRange>::value, "");
+        static_assert(std::is_constructible<ExplicitNonRange, decltype(init{1, 2})>::value, "");
+        static_assert(!std::is_convertible<decltype(init{1, 2}.and_with(1, 2, 3)), ExplicitNonRange>::value, "");
+        static_assert(!std::is_constructible<ExplicitNonRange, decltype(init{1, 2}.and_with(1, 2, 3))>::value, "");
 
         // Non-range, implicit constructor.
-        static_assert(std::is_convertible<decltype(INIT(1, 2)), ImplicitNonRange>::value, "");
-        static_assert(std::is_constructible<ImplicitNonRange, decltype(INIT(1, 2))>::value, "");
-        static_assert(!std::is_convertible<decltype(INIT(1, 2).and_with(1, 2, 3)), ImplicitNonRange>::value, "");
-        static_assert(!std::is_constructible<ImplicitNonRange, decltype(INIT(1, 2).and_with(1, 2, 3))>::value, "");
+        static_assert(std::is_convertible<decltype(init{1, 2}), ImplicitNonRange>::value, "");
+        static_assert(std::is_constructible<ImplicitNonRange, decltype(init{1, 2})>::value, "");
+        static_assert(!std::is_convertible<decltype(init{1, 2}.and_with(1, 2, 3)), ImplicitNonRange>::value, "");
+        static_assert(!std::is_constructible<ImplicitNonRange, decltype(init{1, 2}.and_with(1, 2, 3))>::value, "");
     }
 
     { // Make sure `.and_with(...)` doesn't work for non-ranges.
         // This is an arbitrary restriction, intended to force a cleaner usage.
-        static_assert(std::is_constructible<std::array<int, 3>, decltype(INIT(1, 2, 3))>::value, "");
-        static_assert(std::is_constructible<std::array<int, 3>, decltype(INIT(1, 2, 3).and_with())>::value, ""); // Empty argument list is allowed, to simplify generic code.
-        static_assert(!std::is_constructible<std::array<int, 3>, decltype(INIT(1, 2).and_with(3))>::value, "");
-        static_assert(!std::is_constructible<std::array<int, 3>, decltype(INIT(1).and_with(2, 3))>::value, "");
-        static_assert(!std::is_constructible<std::array<int, 3>, decltype(INIT().and_with(1, 2, 3))>::value, "");
+        static_assert(std::is_constructible<std::array<int, 3>, decltype(init{1, 2, 3})>::value, "");
+        static_assert(std::is_constructible<std::array<int, 3>, decltype(init{1, 2, 3}.and_with())>::value, ""); // Empty argument list is allowed, to simplify generic code.
+        static_assert(!std::is_constructible<std::array<int, 3>, decltype(init{1, 2}.and_with(3))>::value, "");
+        static_assert(!std::is_constructible<std::array<int, 3>, decltype(init{1}.and_with(2, 3))>::value, "");
+        static_assert(!std::is_constructible<std::array<int, 3>, decltype(init{}.and_with(1, 2, 3))>::value, "");
     }
 
     { // Constexpr-ness.
@@ -609,33 +518,33 @@ int main()
         constexpr double x3 = 3.2;
 
         // Homogeneous.
-        static_assert(ConstexprRange<int>(INIT(1, 2, 3)).sum == 6, "");
-        static_assert(ConstexprRange<int>(INIT(x1, x1, x1)).sum == 3, "");
+        static_assert(ConstexprRange<int>(init{1, 2, 3}).sum == 6, "");
+        static_assert(ConstexprRange<int>(init{x1, x1, x1}).sum == 3, "");
         // With extra args.
-        static_assert(ConstexprRange<int, const double &, int>(INIT(1, 2, 3).and_with(x3, 4)).sum == 13, "");
-        static_assert(ConstexprRange<int, const double &, int>(INIT(x1, x1, x1).and_with(x3, 4)).sum == 10, "");
+        static_assert(ConstexprRange<int, const double &, int>(init{1, 2, 3}.and_with(x3, 4)).sum == 13, "");
+        static_assert(ConstexprRange<int, const double &, int>(init{x1, x1, x1}.and_with(x3, 4)).sum == 10, "");
 
         // Heterogeneous.
-        static_assert(ConstexprRange<int>(INIT(1, 2.1f, 3.2)).sum == 6, "");
-        static_assert(ConstexprRange<int>(INIT(x1, x2, x3)).sum == 6, "");
+        static_assert(ConstexprRange<int>(init{1, 2.1f, 3.2}).sum == 6, "");
+        static_assert(ConstexprRange<int>(init{x1, x2, x3}).sum == 6, "");
         // With extra args.
-        static_assert(ConstexprRange<int, const double &, int>(INIT(1, 2.1f, 3.2).and_with(x3, 4)).sum == 13, "");
-        static_assert(ConstexprRange<int, const double &, int>(INIT(x1, x2, x3).and_with(x3, 4)).sum == 13, "");
+        static_assert(ConstexprRange<int, const double &, int>(init{1, 2.1f, 3.2}.and_with(x3, 4)).sum == 13, "");
+        static_assert(ConstexprRange<int, const double &, int>(init{x1, x2, x3}.and_with(x3, 4)).sum == 13, "");
     }
 
     { // Nested lists with explicit constructors.
         // Non-range element.
-        std::vector<ExplicitNonRange> vec1 = INIT(INIT(1,2), INIT(3,4), INIT(5,6));
+        std::vector<ExplicitNonRange> vec1 = init{init{1,2}, init{3,4}, init{5,6}};
         ASSERT_EQ(vec1.size(), 3);
         // Non-range element, heterogeneous list.
-        std::vector<ExplicitNonRange> vec2 = INIT(INIT(1,2), INIT(3,4), INIT(ExplicitNonRange(1,2)));
+        std::vector<ExplicitNonRange> vec2 = init{init{1,2}, init{3,4}, init{ExplicitNonRange(1,2)}};
         ASSERT_EQ(vec2.size(), 3);
 
         // Range element.
-        std::vector<ExplicitRange> vec3 = INIT(INIT(1,2), INIT(3,4), INIT(5,6));
+        std::vector<ExplicitRange> vec3 = init{init{1,2}, init{3,4}, init{5,6}};
         ASSERT_EQ(vec3.size(), 3);
         // Range element, heterogeneous list.
-        std::vector<ExplicitRange> vec4 = INIT(INIT(1,2), INIT(3,4), INIT(5,6,7));
+        std::vector<ExplicitRange> vec4 = init{init{1,2}, init{3,4}, init{5,6,7}};
         ASSERT_EQ(vec4.size(), 3);
     }
 
@@ -643,8 +552,8 @@ int main()
         int x = 42;
         float y = 43;
 
-        using HomogeneousLvalue = decltype(INIT(x, x, x));
-        using HomogeneousLvalueExtra = decltype(INIT(x, x, x).and_with(42, 43, 44));
+        using HomogeneousLvalue = decltype(init{x, x, x});
+        using HomogeneousLvalueExtra = decltype(init{x, x, x}.and_with(42, 43, 44));
         // Copyability.
         static_assert(std::is_copy_constructible<HomogeneousLvalue>::value && std::is_copy_assignable<HomogeneousLvalue>::value, "");
         // Ref-qualifiers on conversions, explicit and implicit.
@@ -654,8 +563,8 @@ int main()
         static_assert(!std::is_convertible<HomogeneousLvalueExtra &, ExplicitRangeWithArgs>::value && std::is_constructible<ExplicitRangeWithArgs, HomogeneousLvalueExtra &>::value, "");
         static_assert(std::is_convertible<HomogeneousLvalueExtra &, ImplicitRangeWithArgs>::value && std::is_constructible<ImplicitRangeWithArgs, HomogeneousLvalueExtra &>::value, "");
 
-        using HeterogeneousLvalue = decltype(INIT(x, x, y));
-        using HeterogeneousLvalueExtra = decltype(INIT(x, x, y).and_with(42, 43, 44));
+        using HeterogeneousLvalue = decltype(init{x, x, y});
+        using HeterogeneousLvalueExtra = decltype(init{x, x, y}.and_with(42, 43, 44));
         // Copyability.
         static_assert(std::is_copy_constructible<HeterogeneousLvalue>::value && std::is_copy_assignable<HeterogeneousLvalue>::value, "");
         // Ref-qualifiers on conversions, explicit and implicit.
@@ -665,8 +574,8 @@ int main()
         static_assert(!std::is_convertible<HeterogeneousLvalueExtra &, ExplicitRangeWithArgs>::value && std::is_constructible<ExplicitRangeWithArgs, HeterogeneousLvalueExtra &>::value, "");
         static_assert(std::is_convertible<HeterogeneousLvalueExtra &, ImplicitRangeWithArgs>::value && std::is_constructible<ImplicitRangeWithArgs, HeterogeneousLvalueExtra &>::value, "");
 
-        using HomogeneousNonLvalue = decltype(INIT(42, x, x));
-        using HomogeneousNonLvalueExtra = decltype(INIT(42, x, x).and_with(42, 43, 44));
+        using HomogeneousNonLvalue = decltype(init{42, x, x});
+        using HomogeneousNonLvalueExtra = decltype(init{42, x, x}.and_with(42, 43, 44));
         // Copyability.
         static_assert(!std::is_copy_constructible<HomogeneousNonLvalue>::value && !std::is_copy_assignable<HomogeneousNonLvalue>::value, "");
         // Ref-qualifiers on conversions, explicit and implicit.
@@ -676,8 +585,8 @@ int main()
         static_assert(!std::is_constructible<ExplicitRangeWithArgs, HomogeneousNonLvalueExtra &>::value && !std::is_convertible<HomogeneousNonLvalueExtra, ExplicitRangeWithArgs>::value && std::is_constructible<ExplicitRangeWithArgs, HomogeneousNonLvalueExtra>::value, "");
         static_assert(!std::is_constructible<ImplicitRangeWithArgs, HomogeneousNonLvalueExtra &>::value && std::is_convertible<HomogeneousNonLvalueExtra, ImplicitRangeWithArgs>::value && std::is_constructible<ImplicitRangeWithArgs, HomogeneousNonLvalueExtra>::value, "");
 
-        using HeterogeneousNonLvalue = decltype(INIT(42, x, y));
-        using HeterogeneousNonLvalueExtra = decltype(INIT(42, x, y).and_with(42, 43, 44));
+        using HeterogeneousNonLvalue = decltype(init{42, x, y});
+        using HeterogeneousNonLvalueExtra = decltype(init{42, x, y}.and_with(42, 43, 44));
         // Copyability.
         static_assert(!std::is_copy_constructible<HeterogeneousNonLvalue>::value && !std::is_copy_assignable<HeterogeneousNonLvalue>::value, "");
         // Ref-qualifiers on conversions, explicit and implicit.
@@ -691,29 +600,22 @@ int main()
     { // Begin/end iterators in homogeneous lists.
         int x = 3, y = 2, z = 1;
         // Lvalue-only lists have unconstrained begin/end.
-        static_assert(HasBeginEnd<decltype(INIT(x, y, z))>::value, "");
-        static_assert(HasBeginEnd<decltype(INIT(x, y, z)) &>::value, "");
+        static_assert(HasBeginEnd<decltype(init{x, y, z})>::value, "");
+        static_assert(HasBeginEnd<decltype(init{x, y, z}) &>::value, "");
         // Non-lvalue-only lists have rvalue-ref-qualified begin/end.
-        static_assert(HasBeginEnd<decltype(INIT(1, 2, 3))>::value, "");
-        static_assert(!HasBeginEnd<decltype(INIT(1, 2, 3)) &>::value, "");
+        static_assert(HasBeginEnd<decltype(init{1, 2, 3})>::value, "");
+        static_assert(!HasBeginEnd<decltype(init{1, 2, 3}) &>::value, "");
         // Heterogeneous lists don't have begin/end.
-        static_assert(!HasBeginEnd<decltype(INIT(x, 2, 3))>::value, "");
-        static_assert(!HasBeginEnd<decltype(INIT(x, 2, 3)) &>::value, "");
+        static_assert(!HasBeginEnd<decltype(init{x, 2, 3})>::value, "");
+        static_assert(!HasBeginEnd<decltype(init{x, 2, 3}) &>::value, "");
 
         // Check that `std::sort` likes our iterators.
-        auto i = INIT(x, y, z);
+        auto i = init{x, y, z};
         std::sort(i.begin(), i.end());
         ASSERT_EQ(x, 1);
         ASSERT_EQ(y, 2);
         ASSERT_EQ(z, 3);
     }
 
-    std::cout << "OK";
-    #if BETTERLISTINIT_CXX_STANDARD >= 17 && !CONTAINERS_HAVE_MANDATORY_COPY_ELISION
-    std::cout << " (without mandatory copy elision)";
-    #endif
-    #if BETTERLISTINIT_ALLOCATOR_HACK
-    std::cout << " (with" << (better_list_init::detail::allocator_hack::enabled::value ? "" : " inactive") << " allocator hack)";
-    #endif
-    std::cout << "\n";
+    std::cout << "OK\n";
 }
