@@ -19,8 +19,6 @@ including containers of non-copyable elements, which otherwise don't support `st
   * [Range vs non-range initialization](#range-vs-non-range-initialization)
   * [More on range initialization](#more-on-range-initialization)
   * [`.begin()`/`.end()`](#beginend)
-* [Using better_list_init in your own libraries](#using-better_list_init-in-your-own-libraries)
-  * [The stable API](#the-stable-api)
 
 </p>
 </details>
