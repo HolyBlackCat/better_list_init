@@ -149,7 +149,7 @@ Non-ranges are initialized directly with the list elements, instead of the itera
 
 **Ranges are initialized using `T(begin, end)`. Non-ranges are initialized using `T{elements...}`.** You can pass extra arguments to a range constructor by feeding them to `.and_with(...)`. Non-ranges don't accept `.and_with(...)` at all (except with no arguments, to simplify generic code).
 
-The conversion `operator` from `init{...}` to a type can sometimes be **`explicit`**. For ranges, it happens when the type doesn't have a constructor accepting `std::initializer_list` (followed by the arguments passed to `.and_with()`, if any). For non-ranges, it happens when `void foo(Container); foo({...});` is ill-formed (most often this happens when the constructor is `explicit`).
+The conversion `operator` from `init{...}` to a type can sometimes be **`explicit`**. For non-ranges, it happens when `void foo(Container); foo({...});` is ill-formed (most often this happens when the constructor is `explicit`). For ranges, it's currently always implicit.
 
 ### More on range initialization
 

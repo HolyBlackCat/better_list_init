@@ -27,12 +27,11 @@
 //    misrepresented as being the original software.
 // 3. This notice may not be removed or altered from any source distribution.
 
-#include <initializer_list>
 #include <type_traits>
 
 // The version number: `major*10000 + minor*100 + patch`.
 #ifndef BETTERLISTINIT_VERSION
-#define BETTERLISTINIT_VERSION 20100
+#define BETTERLISTINIT_VERSION 20200
 #endif
 
 // This file is included by this header automatically, if it exists.
@@ -52,13 +51,6 @@ namespace better_list_init
 {
     namespace detail
     {
-        // Convertible to any `std::initializer_list<??>`.
-        struct any_init_list
-        {
-            template <typename T>
-            operator std::initializer_list<T>() const noexcept; // Not defined.
-        };
-
         // Don't want to include extra headers, so I roll my own typedefs.
         using nullptr_t = decltype(nullptr);
         using size_t = decltype(sizeof(int));
@@ -119,9 +111,12 @@ namespace better_list_init
     {
         // Whether to make the conversion operator of `init{...}` implicit. `T` is the target container type,
         // and `P...` are the extra constructor arguments.
-        // Defaults to checking if `T` has a `std::initializer_list<U>` constructor, for any `U`.
+        // Currently always defaults to true. We used to check for implicit `std::initializer_list<??>` constructors, but A: that causes issues on MSVC,
+        //   which tries to instantiate that constructor even if the element type is non-copyable, causing issues; and B: this allows us to decouple
+        //   from `std::initializer_list` entirely, in case containers don't wish to support it.
+        // We could perhaps check if the constructor from two iterators is implicit or not, but that's more work, and I'm not sure if that's actually useful.
         template <typename Void, typename T, typename ...P>
-        struct allow_implicit_range_init : std::is_constructible<T, detail::any_init_list, P...> {};
+        struct allow_implicit_range_init : std::true_type {};
         // Same, but for braced init (for non-ranges), as opposed to initializing ranges from a pair of iterators.
         // Defaults to checking if `T` is implicitly constructible from a braced list of `P...`.
         // NOTE: Here the meaning of `P...` is different compared to the `allow_implicit_range_init`.

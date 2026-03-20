@@ -194,13 +194,16 @@ template <typename ...P>
 struct BasicImplicitRange : public BasicExplicitRange<P...>
 {
     using BasicExplicitRange<P...>::BasicExplicitRange;
-
-    BasicImplicitRange(std::initializer_list<typename BasicImplicitRange::value_type>, P...);
 };
 using ExplicitRange = BasicExplicitRange<>;
 using ImplicitRange = BasicImplicitRange<>;
 using ExplicitRangeWithArgs = BasicExplicitRange<int &&, int &&, int &&>;
 using ImplicitRangeWithArgs = BasicImplicitRange<int &&, int &&, int &&>;
+
+// Mark `ExplicitRange[WithArgs]` as requiring an explicit constructor.
+// This used to depend on the properties of the type, but currently ALL ranges are considered implicitly constructible unless manually opted out. So we opt out here.
+template <typename Void, typename ...P, typename ...Q>
+struct better_list_init::custom::allow_implicit_range_init<Void, BasicExplicitRange<Q...>, P...> : std::false_type {};
 
 struct ExplicitNonRange
 {
