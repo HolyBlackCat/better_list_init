@@ -32,7 +32,7 @@
 
 // The version number: `major*10000 + minor*100 + patch`.
 #ifndef BETTERLISTINIT_VERSION
-#define BETTERLISTINIT_VERSION 20000
+#define BETTERLISTINIT_VERSION 20100
 #endif
 
 // This file is included by this header automatically, if it exists.
@@ -278,23 +278,11 @@ namespace better_list_init
         template <typename T, bool X>
         struct dependent_value : std::integral_constant<bool, X> {};
 
-        // Not using fold expressions nor `std::{con,dis}junction` to avoid depending on C++17.
-        // Those mimic the latter.
-        template <typename ...P> struct all_of : std::true_type {};
-        template <typename T> struct all_of<T> : T {};
-        template <typename T, typename ...P> struct all_of<T, P...> : std::conditional_t<T::value, all_of<P...>, T> {};
-
-        template <typename ...P> struct any_of : std::false_type {};
-        template <typename T> struct any_of<T> : T {};
-        template <typename T, typename ...P> struct any_of<T, P...> : std::conditional_t<T::value, T, any_of<P...>> {};
-
-        template <typename T> struct negate : std::integral_constant<bool, !T::value> {};
-
         // Returns true if all types in `P...` are the same.
         template <typename ...P>
-        struct all_types_same : std::true_type {};
+        constexpr bool all_types_same = true;
         template <typename T, typename ...P>
-        struct all_types_same<T, P...> : all_of<std::is_same<T, P>...> {};
+        constexpr bool all_types_same<T, P...> = (std::is_same_v<T, P> && ...);
 
         // Returns the first type in a list.
         template <typename ...P>
@@ -558,7 +546,7 @@ namespace better_list_init
             using type = tuple_impl_regular<P...>;
         };
         template <typename ...P>
-        struct tuple_impl_selector<std::enable_if_t<all_types_same<P...>::value && sizeof...(P) != 0>, P...>
+        struct tuple_impl_selector<std::enable_if_t<all_types_same<P...> && sizeof...(P) != 0>, P...>
         {
             using type = tuple_impl_array<typename first_type<P...>::type, sizeof...(P)>;
         };
@@ -640,21 +628,20 @@ namespace better_list_init
 
     template <typename ...P>
     class [[nodiscard]] init
-        : detail::maybe_copyable<detail::all_of<std::is_lvalue_reference<P>...>::value>
+        : detail::maybe_copyable<(std::is_lvalue_reference_v<P> && ...)>
     {
       public:
         // Whether this list can be used to initialize a range of `T`s.
-        template <typename T> struct can_initialize_elem         : detail::all_of<detail::constructible        <T, P>...> {};
-        template <typename T> struct can_nothrow_initialize_elem : detail::all_of<detail::nothrow_constructible<T, P>...> {};
+        template <typename T> static constexpr bool can_initialize_elem         = (detail::constructible        <T, P>::value && ...);
+        template <typename T> static constexpr bool can_nothrow_initialize_elem = (detail::nothrow_constructible<T, P>::value && ...);
 
         // Whether all types in `P...` are the same (and there is at least one type). Then we can simplify some logic.
-        // static constexpr bool is_homogeneous = detail::all_types_same<P...>::value && sizeof...(P) > 0;
-        static constexpr bool is_homogeneous = detail::all_types_same<P...>::value && sizeof...(P) > 0;
+        static constexpr bool is_homogeneous = detail::all_types_same<P...> && sizeof...(P) > 0;
         // If all types in `P...` are the same (and there's at least one), returns that type. Otherwise returns an empty struct.
         using homogeneous_type = typename std::conditional_t<is_homogeneous, detail::first_type<P &&...>, std::enable_if<true, detail::empty>>::type;
 
         // Whether all our references are lvalue references. Such lists can be copied.
-        static constexpr bool is_lvalue_only = detail::all_of<std::is_lvalue_reference<P>...>::value;
+        static constexpr bool is_lvalue_only = (std::is_lvalue_reference_v<P> && ...);
 
       private:
         using tuple_t = detail::tuple<P &&...>;
@@ -687,7 +674,7 @@ namespace better_list_init
 
             // Note that this is unnecessary when `is_homogeneous` is true, because in that case our iterator
             // dereferences directly to `homogeneous_type`.
-            constexpr operator T() const noexcept(can_nothrow_initialize_elem<T>::value)
+            constexpr operator T() const noexcept(can_nothrow_initialize_elem<T>)
             {
                 return target->template apply_to_elem<detail::construct_from_elem<T>>(index);
             }
@@ -791,21 +778,21 @@ namespace better_list_init
 
         // See the public `_helper`-less versions below.
         // Note that we have to use a specialization here. Directly inheriting from `integral_constant` isn't enough, because it's not SFINAE-friendly (with respect to the `element_type<T>::type`).
-        template <typename Void, typename T, typename ...Q> struct can_initialize_range_helper : std::false_type {};
-        template <typename T, typename ...Q> struct can_initialize_range_helper        <std::enable_if_t<custom::is_range<T>::value && detail::constructible_from_iters        <T, elem_iter<typename custom::element_type<T>::type>, init, Q...>::value && can_initialize_elem        <typename custom::element_type<T>::type>::value>, T, Q...> : std::true_type {};
-        template <typename Void, typename T, typename ...Q> struct can_nothrow_initialize_range_helper : std::false_type {};
-        template <typename T, typename ...Q> struct can_nothrow_initialize_range_helper<std::enable_if_t<custom::is_range<T>::value && detail::nothrow_constructible_from_iters<T, elem_iter<typename custom::element_type<T>::type>, init, Q...>::value && can_nothrow_initialize_elem<typename custom::element_type<T>::type>::value>, T, Q...> : std::true_type {};
+        // This is specialized out-of-line to make older GCC versions happy.
+        template <typename Void, typename T, typename ...Q> static constexpr bool can_initialize_range_helper         = false;
+        // This is specialized out-of-line to make older GCC versions happy.
+        template <typename Void, typename T, typename ...Q> static constexpr bool can_nothrow_initialize_range_helper = false;
 
       public:
         // Whether this list can be used to initialize a range type `T`, with extra constructor arguments `Q...`.
-        template <typename T, typename ...Q> struct can_initialize_range         : can_initialize_range_helper        <void, T, Q...> {};
-        template <typename T, typename ...Q> struct can_nothrow_initialize_range : can_nothrow_initialize_range_helper<void, T, Q...> {};
+        template <typename T, typename ...Q> static constexpr bool can_initialize_range         = can_initialize_range_helper        <void, T, Q...>;
+        template <typename T, typename ...Q> static constexpr bool can_nothrow_initialize_range = can_nothrow_initialize_range_helper<void, T, Q...>;
         // Whether this list can be used to initialize a non-range of type `T` (by forwarding arguments to the constructor), with extra constructor arguments `Q...`.
         // NOTE: We check `!is_range<T>` here to avoid the uniform init fiasco, at least for our lists.
-        // NOTE: We need short-circuiting here, otherwise libstdc++ 10 in C++14 mode fails with a hard error in `nonrange_brace_constructible`.
         // NOTE: `sizeof...(Q) == 0` is an arbitrary restriction, hopefully forcing a more clear usage.
-        template <typename T, typename ...Q> struct can_initialize_nonrange         : detail::all_of<detail::negate<custom::is_range<T>>, std::integral_constant<bool, sizeof...(Q) == 0>, detail::nonrange_brace_constructible        <T, init, P..., Q...>> {};
-        template <typename T, typename ...Q> struct can_nothrow_initialize_nonrange : detail::all_of<detail::negate<custom::is_range<T>>, std::integral_constant<bool, sizeof...(Q) == 0>, detail::nothrow_nonrange_brace_constructible<T, init, P..., Q...>> {};
+        // NOTE: This needs short-circuiting to make MSVC happy. I believe older GCC versions need this too.
+        template <typename T, typename ...Q> static constexpr bool can_initialize_nonrange         = std::conjunction_v<std::bool_constant<!custom::is_range<T>::value && sizeof...(Q) == 0>, detail::nonrange_brace_constructible        <T, init, P..., Q...>>;
+        template <typename T, typename ...Q> static constexpr bool can_nothrow_initialize_nonrange = std::conjunction_v<std::bool_constant<!custom::is_range<T>::value && sizeof...(Q) == 0>, detail::nothrow_nonrange_brace_constructible<T, init, P..., Q...>>;
 
       private:
         template <typename T>
@@ -814,14 +801,14 @@ namespace better_list_init
             const init *list = nullptr;
 
             // Convert to an empty range.
-            template <typename ...Q, std::enable_if_t<can_initialize_range<T, Q...>::value && sizeof...(P) == 0, detail::nullptr_t> = nullptr>
+            template <typename ...Q, std::enable_if_t<can_initialize_range<T, Q...> && sizeof...(P) == 0, detail::nullptr_t> = nullptr>
             [[nodiscard]] constexpr T operator()(Q &&... extra_args) const
             {
                 using elem_type = typename custom::element_type<T>::type;
                 return custom::construct_range<void, T, elem_iter<elem_type>, init, Q...>{}(elem_iter<elem_type>{}, elem_iter<elem_type>{}, static_cast<Q &&>(extra_args)...);
             }
             // Convert to a non-empty heterogeneous range.
-            template <typename ...Q, std::enable_if_t<can_initialize_range<T, Q...>::value && sizeof...(P) != 0 && !is_homogeneous, detail::nullptr_t> = nullptr>
+            template <typename ...Q, std::enable_if_t<can_initialize_range<T, Q...> && sizeof...(P) != 0 && !is_homogeneous, detail::nullptr_t> = nullptr>
             [[nodiscard]] constexpr T operator()(Q &&... extra_args) const
             {
                 using elem_type = typename custom::element_type<T>::type;
@@ -842,7 +829,7 @@ namespace better_list_init
                 return custom::construct_range<void, T, elem_iter<elem_type>, init, Q...>{}(begin, end, static_cast<Q &&>(extra_args)...);
             }
             // Convert to a non-empty homogeneous range.
-            template <typename ...Q, std::enable_if_t<can_initialize_range<T, Q...>::value && sizeof...(P) != 0 && is_homogeneous, detail::nullptr_t> = nullptr>
+            template <typename ...Q, std::enable_if_t<can_initialize_range<T, Q...> && sizeof...(P) != 0 && is_homogeneous, detail::nullptr_t> = nullptr>
             [[nodiscard]] constexpr T operator()(Q &&... extra_args) const
             {
                 using elem_type = typename custom::element_type<T>::type;
@@ -854,7 +841,7 @@ namespace better_list_init
                 return custom::construct_range<void, T, elem_iter<elem_type>, init, Q...>{}(begin, end, static_cast<Q &&>(extra_args)...);
             }
             // Convert to a non-range.
-            template <typename ...Q, std::enable_if_t<can_initialize_nonrange<T, Q...>::value, detail::nullptr_t> = nullptr>
+            template <typename ...Q, std::enable_if_t<can_initialize_nonrange<T, Q...>, detail::nullptr_t> = nullptr>
             [[nodiscard]] constexpr T operator()(Q &&... extra_args) const
             {
                 detail::tuple<Q &&...> extra_tuple{&extra_args...};
@@ -863,23 +850,19 @@ namespace better_list_init
             }
         };
 
-        template <typename Void, typename T, typename ...Q> struct can_nothrow_initialize_helper : can_nothrow_initialize_nonrange<T, Q...> {};
-        template <typename T, typename ...Q> struct can_nothrow_initialize_helper<std::enable_if_t<custom::is_range<T>::value>, T, Q...> : can_nothrow_initialize_range<T, Q...> {};
-
-        template <typename Void, typename T, typename ...Q>
-        struct allow_implicit_init_helper : custom::allow_implicit_nonrange_init<void, T, P..., Q...> {};
-        template <typename T, typename ...Q>
-        struct allow_implicit_init_helper<std::enable_if_t<custom::is_range<T>::value>, T, Q...> : custom::allow_implicit_range_init<void, T, Q.../*note, no P...*/> {};
+        template <typename Void, typename T, typename ...Q> static constexpr bool can_nothrow_initialize_helper = can_nothrow_initialize_nonrange<T, Q...>;
+        // This is specialized out-of-line to make older GCC versions happy.
+        template <typename Void, typename T, typename ...Q> static constexpr bool allow_implicit_init_helper = custom::allow_implicit_nonrange_init<void, T, P..., Q...>::value;
 
       public:
         // Whether this list can be used to initialize a type `T`, with extra constructor arguments `Q...`.
         // Returns true if `can_initialize_range<T,Q...>` or `can_initialize_nonrange<T,Q...>` is true.
-        template <typename T, typename ...Q> struct can_initialize : detail::any_of<can_initialize_range<T, Q...>, can_initialize_nonrange<T, Q...>> {};
-        template <typename T, typename ...Q> struct can_nothrow_initialize : can_nothrow_initialize_helper<void, T, Q...> {};
+        template <typename T, typename ...Q> static constexpr bool can_initialize = can_initialize_range<T, Q...> || can_initialize_nonrange<T, Q...>;
+        template <typename T, typename ...Q> static constexpr bool can_nothrow_initialize = can_nothrow_initialize_helper<void, T, Q...>;
 
         // Whether the conversion to `T` should be implicit, for extra constructor arguments `Q...`.
         template <typename T, typename ...Q>
-        struct allow_implicit_init : allow_implicit_init_helper<void, T, Q...> {};
+        static constexpr bool allow_implicit_init = allow_implicit_init_helper<void, T, Q...>;
 
         // The constructor from a braced (or parenthesized) list.
         // No `[[nodiscard]]` because GCC 9 complains. Having it on the entire class should be enough.
@@ -898,26 +881,26 @@ namespace better_list_init
         // Note that the uniform init fiasco is impossible for our lists, since we allow braced init only if `detail::is_range<T>` is false.
 
         // Implicit, lvalue-only lists.
-        template <typename T, detail::enable_if_valid_conversion_target<T> = 0, std::enable_if_t<can_initialize<T>::value && allow_implicit_init<T>::value && is_lvalue_only, detail::nullptr_t> = nullptr>
-        [[nodiscard]] constexpr operator T() const & noexcept(can_nothrow_initialize<T>::value)
+        template <typename T, detail::enable_if_valid_conversion_target<T> = 0, std::enable_if_t<can_initialize<T> && allow_implicit_init<T> && is_lvalue_only, detail::nullptr_t> = nullptr>
+        [[nodiscard]] constexpr operator T() const & noexcept(can_nothrow_initialize<T>)
         {
             return convert_functor<T>{this}();
         }
         // Explicit, lvalue-only lists.
-        template <typename T, detail::enable_if_valid_conversion_target<T> = 0, std::enable_if_t<can_initialize<T>::value && !allow_implicit_init<T>::value && is_lvalue_only, detail::nullptr_t> = nullptr>
-        [[nodiscard]] constexpr explicit operator T() const & noexcept(can_nothrow_initialize<T>::value)
+        template <typename T, detail::enable_if_valid_conversion_target<T> = 0, std::enable_if_t<can_initialize<T> && !allow_implicit_init<T> && is_lvalue_only, detail::nullptr_t> = nullptr>
+        [[nodiscard]] constexpr explicit operator T() const & noexcept(can_nothrow_initialize<T>)
         {
             return convert_functor<T>{this}();
         }
         // Implicit, non-lvalue-only lists.
-        template <typename T, detail::enable_if_valid_conversion_target<T> = 0, std::enable_if_t<can_initialize<T>::value && allow_implicit_init<T>::value && !is_lvalue_only, detail::nullptr_t> = nullptr>
-        [[nodiscard]] constexpr operator T() const && noexcept(can_nothrow_initialize<T>::value)
+        template <typename T, detail::enable_if_valid_conversion_target<T> = 0, std::enable_if_t<can_initialize<T> && allow_implicit_init<T> && !is_lvalue_only, detail::nullptr_t> = nullptr>
+        [[nodiscard]] constexpr operator T() const && noexcept(can_nothrow_initialize<T>)
         {
             return convert_functor<T>{this}();
         }
         // Explicit, non-lvalue-only lists.
-        template <typename T, detail::enable_if_valid_conversion_target<T> = 0, std::enable_if_t<can_initialize<T>::value && !allow_implicit_init<T>::value && !is_lvalue_only, detail::nullptr_t> = nullptr>
-        [[nodiscard]] constexpr explicit operator T() const && noexcept(can_nothrow_initialize<T>::value)
+        template <typename T, detail::enable_if_valid_conversion_target<T> = 0, std::enable_if_t<can_initialize<T> && !allow_implicit_init<T> && !is_lvalue_only, detail::nullptr_t> = nullptr>
+        [[nodiscard]] constexpr explicit operator T() const && noexcept(can_nothrow_initialize<T>)
         {
             return convert_functor<T>{this}();
         }
@@ -937,26 +920,26 @@ namespace better_list_init
 
           public:
             // Implicit, lvalue-only lists.
-            template <typename T, detail::enable_if_valid_conversion_target<T> = 0, std::enable_if_t<can_initialize<T, Q...>::value && allow_implicit_init<T, Q...>::value && is_lvalue_only, detail::nullptr_t> = nullptr>
-            [[nodiscard]] constexpr operator T() const & noexcept(can_nothrow_initialize<T, Q...>::value)
+            template <typename T, detail::enable_if_valid_conversion_target<T> = 0, std::enable_if_t<can_initialize<T, Q...> && allow_implicit_init<T, Q...> && is_lvalue_only, detail::nullptr_t> = nullptr>
+            [[nodiscard]] constexpr operator T() const & noexcept(can_nothrow_initialize<T, Q...>)
             {
                 return extra_params.apply(convert_functor<T>{list});
             }
             // Explicit, lvalue-only lists.
-            template <typename T, detail::enable_if_valid_conversion_target<T> = 0, std::enable_if_t<can_initialize<T, Q...>::value && !allow_implicit_init<T, Q...>::value && is_lvalue_only, detail::nullptr_t> = nullptr>
-            [[nodiscard]] constexpr explicit operator T() const & noexcept(can_nothrow_initialize<T, Q...>::value)
+            template <typename T, detail::enable_if_valid_conversion_target<T> = 0, std::enable_if_t<can_initialize<T, Q...> && !allow_implicit_init<T, Q...> && is_lvalue_only, detail::nullptr_t> = nullptr>
+            [[nodiscard]] constexpr explicit operator T() const & noexcept(can_nothrow_initialize<T, Q...>)
             {
                 return extra_params.apply(convert_functor<T>{list});
             }
             // Implicit, non-lvalue-only lists.
-            template <typename T, detail::enable_if_valid_conversion_target<T> = 0, std::enable_if_t<can_initialize<T, Q...>::value && allow_implicit_init<T, Q...>::value && !is_lvalue_only, detail::nullptr_t> = nullptr>
-            [[nodiscard]] constexpr operator T() const && noexcept(can_nothrow_initialize<T, Q...>::value)
+            template <typename T, detail::enable_if_valid_conversion_target<T> = 0, std::enable_if_t<can_initialize<T, Q...> && allow_implicit_init<T, Q...> && !is_lvalue_only, detail::nullptr_t> = nullptr>
+            [[nodiscard]] constexpr operator T() const && noexcept(can_nothrow_initialize<T, Q...>)
             {
                 return extra_params.apply(convert_functor<T>{list});
             }
             // Explicit, non-lvalue-only lists.
-            template <typename T, detail::enable_if_valid_conversion_target<T> = 0, std::enable_if_t<can_initialize<T, Q...>::value && !allow_implicit_init<T, Q...>::value && !is_lvalue_only, detail::nullptr_t> = nullptr>
-            [[nodiscard]] constexpr explicit operator T() const && noexcept(can_nothrow_initialize<T, Q...>::value)
+            template <typename T, detail::enable_if_valid_conversion_target<T> = 0, std::enable_if_t<can_initialize<T, Q...> && !allow_implicit_init<T, Q...> && !is_lvalue_only, detail::nullptr_t> = nullptr>
+            [[nodiscard]] constexpr explicit operator T() const && noexcept(can_nothrow_initialize<T, Q...>)
             {
                 return extra_params.apply(convert_functor<T>{list});
             }
@@ -1004,6 +987,11 @@ namespace better_list_init
             return ret;
         }
     };
+
+    template <typename ...P> template <typename T, typename ...Q> constexpr bool init<P...>::can_initialize_range_helper        <std::enable_if_t<custom::is_range<T>::value && detail::constructible_from_iters        <T, typename init<P...>::template elem_iter<typename custom::element_type<T>::type>, init<P...>, Q...>::value && init<P...>::template can_initialize_elem        <typename custom::element_type<T>::type>>, T, Q...> = true;
+    template <typename ...P> template <typename T, typename ...Q> constexpr bool init<P...>::can_nothrow_initialize_range_helper<std::enable_if_t<custom::is_range<T>::value && detail::nothrow_constructible_from_iters<T, typename init<P...>::template elem_iter<typename custom::element_type<T>::type>, init<P...>, Q...>::value && init<P...>::template can_nothrow_initialize_elem<typename custom::element_type<T>::type>>, T, Q...> = true;
+    template <typename ...P> template <typename T, typename ...Q> constexpr bool init<P...>::can_nothrow_initialize_helper<std::enable_if_t<custom::is_range<T>::value>, T, Q...> = can_nothrow_initialize_range<T, Q...>;
+    template <typename ...P> template <typename T, typename ...Q> constexpr bool init<P...>::allow_implicit_init_helper<std::enable_if_t<custom::is_range<T>::value>, T, Q...> = custom::allow_implicit_range_init<void, T, Q.../*note, no P...*/>::value;
 
     template <typename ...P>
     init(P &&...) -> init<P...>;
