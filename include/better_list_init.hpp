@@ -27,12 +27,11 @@
 //    misrepresented as being the original software.
 // 3. This notice may not be removed or altered from any source distribution.
 
-#include <initializer_list>
 #include <type_traits>
 
 // The version number: `major*10000 + minor*100 + patch`.
 #ifndef BETTERLISTINIT_VERSION
-#define BETTERLISTINIT_VERSION 20200
+#define BETTERLISTINIT_VERSION 20300
 #endif
 
 // This file is included by this header automatically, if it exists.
@@ -52,13 +51,6 @@ namespace better_list_init
 {
     namespace detail
     {
-        // Convertible to any `std::initializer_list<??>`.
-        struct any_init_list
-        {
-            template <typename T>
-            operator std::initializer_list<T>() const noexcept; // Not defined.
-        };
-
         // Don't want to include extra headers, so I roll my own typedefs.
         using nullptr_t = decltype(nullptr);
         using size_t = decltype(sizeof(int));
@@ -132,10 +124,11 @@ namespace better_list_init
         struct allow_target_type : defaults::allow_target_type<T> {};
 
         // Whether to make the conversion operator of `init{...}` implicit. `T` is the target container type,
-        // and `P...` are the extra constructor arguments.
-        // Defaults to checking if `T` has a `std::initializer_list<U>` constructor, for any `U`.
-        template <typename Void, typename T, typename ...P>
-        struct allow_implicit_range_init : std::is_constructible<T, detail::any_init_list, P...> {};
+        //   `I` is our iterator type (if you want to check the respective constructor for implicit-ness),
+        //   and `P...` are the extra constructor arguments.
+        // Defaults to checking if `T` has an implicit constructor from two iterators, followed by `P...`.
+        template <typename Void, typename T, typename I, typename ...P>
+        struct allow_implicit_range_init : detail::implicitly_brace_constructible<T, I, I, P...> {};
         // Same, but for braced init (for non-ranges), as opposed to initializing ranges from a pair of iterators.
         // Defaults to checking if `T` is implicitly constructible from a braced list of `P...`.
         // NOTE: Here the meaning of `P...` is different compared to the `allow_implicit_range_init`.
@@ -1008,7 +1001,7 @@ namespace better_list_init
     template <typename ...P> template <typename T, typename ...Q> constexpr bool init<P...>::can_initialize_nonrange_helper        <std::enable_if_t<!custom::is_range<T>::value && sizeof...(Q) == 0>, T, Q...> = detail::nonrange_brace_constructible        <T, init<P...>, P..., Q...>::value;
     template <typename ...P> template <typename T, typename ...Q> constexpr bool init<P...>::can_nothrow_initialize_nonrange_helper<std::enable_if_t<!custom::is_range<T>::value && sizeof...(Q) == 0>, T, Q...> = detail::nothrow_nonrange_brace_constructible<T, init<P...>, P..., Q...>::value;
     template <typename ...P> template <typename T, typename ...Q> constexpr bool init<P...>::can_nothrow_initialize_helper<std::enable_if_t<custom::is_range<T>::value>, T, Q...> = can_nothrow_initialize_range<T, Q...>;
-    template <typename ...P> template <typename T, typename ...Q> constexpr bool init<P...>::allow_implicit_init_helper<std::enable_if_t<custom::is_range<T>::value>, T, Q...> = custom::allow_implicit_range_init<void, T, Q.../*note, no P...*/>::value;
+    template <typename ...P> template <typename T, typename ...Q> constexpr bool init<P...>::allow_implicit_init_helper<std::enable_if_t<custom::is_range<T>::value>, T, Q...> = custom::allow_implicit_range_init<void, T, elem_iter<custom::element_type<T>>, Q.../*note, no P...*/>::value;
 
     template <typename ...P>
     init(P &&...) -> init<P...>;

@@ -191,11 +191,12 @@ struct BasicExplicitRange
     explicit BasicExplicitRange(T, T, P...) {}
 };
 template <typename ...P>
-struct BasicImplicitRange : public BasicExplicitRange<P...>
+struct BasicImplicitRange
 {
-    using BasicExplicitRange<P...>::BasicExplicitRange;
+    using value_type = int;
 
-    BasicImplicitRange(std::initializer_list<typename BasicImplicitRange::value_type>, P...);
+    template <typename T>
+    BasicImplicitRange(T, T, P...) {}
 };
 using ExplicitRange = BasicExplicitRange<>;
 using ImplicitRange = BasicImplicitRange<>;

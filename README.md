@@ -135,7 +135,7 @@ A longer explanation is provided below.
 
 ### Range vs non-range initialization
 
-First, we determine if the target type looks like a container or not, i.e. if we should be constructing it from a pair of iterators. We call those container-like types "ranges".
+First, we determine if the target type looks like a container or not, i.e. if we should be constructing it from a pair of iterators. I call those container-like types "ranges" here.
 
 Non-ranges are initialized directly with the list elements, instead of the iterators. Ranges are never initialized directly with the elements, so we avoid the direct-list-initialization fiasco.
 
@@ -149,7 +149,7 @@ Non-ranges are initialized directly with the list elements, instead of the itera
 
 **Ranges are initialized using `T(begin, end)`. Non-ranges are initialized using `T{elements...}`.** You can pass extra arguments to a range constructor by feeding them to `.and_with(...)`. Non-ranges don't accept `.and_with(...)` at all (except with no arguments, to simplify generic code).
 
-The conversion `operator` from `init{...}` to a type can sometimes be **`explicit`**. For ranges, it happens when the type doesn't have a constructor accepting `std::initializer_list` (followed by the arguments passed to `.and_with()`, if any). For non-ranges, it happens when `void foo(Container); foo({...});` is ill-formed (most often this happens when the constructor is `explicit`).
+The conversion `operator` from `init{...}` to a type can sometimes be **`explicit`**, this happens when the underlying constructor we call is `explicit`. I.e. for ranges, we check the constructor that accepts the two iterators (followed by the arguments passed to `.and_with()`, if any).
 
 ### More on range initialization
 
@@ -157,9 +157,9 @@ Ranges are constructed from a pair of iterators, followed by the extra arguments
 
 What the iterators deference to depends on whether the list is homogeneous.
 
-An `init{...}` list is **"homogeneous"** if all its elements have the same type, and there's at least one element. Otherwise we call them **"heterogeneous"**. E.g. `init{1,2}` is homogeneous, but `init{1,2.0}` is not, `init{}` is not, and `int x;` `init{1,x}` is not (because the elements have different values categories: rvalue vs lvalue).
+I call an `init{...}` list **"homogeneous"** if all its elements have the same type, and there's at least one element. Otherwise it is **"heterogeneous"**. E.g. `init{1,2}` is homogeneous, but `init{1,2.0}` is not, `init{}` is not, and `int x;` `init{1,x}` is not (because the elements have different values categories: rvalue vs lvalue).
 
-We call the sole element type of a homogeneous list the **"homogeneous type"**, it's always either an lvalue or rvalue reference.
+I call the sole element type of a homogeneous list its **"homogeneous type"**, it's always a reference (either an lvalue or rvalue one).
 
 Homogeneous list iterators dereference to its homogeneous type. Heterogeneous list iterators deference to a (const reference to a) helper objects that has an `operator T`, where `T` is the `::value_type` of the container. (The initial idea was to template the `operator T`, but I ran into some problems with MSVC.)
 
