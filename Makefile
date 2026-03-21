@@ -82,8 +82,7 @@ else
 		-std$(if $(filter %cl,$(COMPILER)),:,=)c++$(if $(and $(filter cl,$(COMPILER)),$(filter 23,$(STANDARD))),23preview,$(STANDARD)) \
 		$(if $(filter clang++%,$(COMPILER)),-stdlib=$(STDLIB)) \
 		$(patsubst $(COMPILER)=%,%,$(filter $(COMPILER)=%,$(CXXFLAGS_PER_COMPILER))) \
-		$(if $(filter %cl,$(COMPILER)),-link -out:,-o)tests \
-		&& ./tests \
+		$(if $(filter %cl,$(COMPILER)),-link -out:tests.exe && ./tests.exe,-otests && ./tests) \
 	)
 endif
 

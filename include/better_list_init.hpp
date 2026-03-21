@@ -32,7 +32,7 @@
 
 // The version number: `major*10000 + minor*100 + patch`.
 #ifndef BETTERLISTINIT_VERSION
-#define BETTERLISTINIT_VERSION 20100
+#define BETTERLISTINIT_VERSION 20200
 #endif
 
 // This file is included by this header automatically, if it exists.
@@ -82,41 +82,55 @@ namespace better_list_init
 
         template <typename T, typename ...P>
         struct nothrow_implicitly_brace_constructible : std::integral_constant<bool, noexcept(accept_parameter<T &&>({declval<P>()...}))> {};
-
-        // The default implementation for `custom::element_type`, see below.
-        template <typename T, typename = void>
-        struct default_element_type {};
-        template <typename T>
-        struct default_element_type<T, decltype(void(declval<typename T::value_type>))> {using type = typename T::value_type;};
-
-        // The default implementation for `custom::construct_range`, see below.
-        template <typename Void, typename T, typename Iter, typename List, typename ...P>
-        struct default_construct_range
-        {
-            template <typename TT = T, std::enable_if_t<std::is_constructible<TT, Iter, Iter, P...>::value, detail::nullptr_t> = nullptr>
-            constexpr T operator()(Iter begin, Iter end, P &&... params) const noexcept(std::is_nothrow_constructible<T, Iter, Iter, P...>::value)
-            {
-                // Don't want to include `<utility>` for `std::move` or `std::forward`.
-                return T(static_cast<Iter &&>(begin), static_cast<Iter &&>(end), static_cast<P &&>(params)...);
-            }
-        };
-
-        // The default implementation for `custom::construct_nonrange`, see below.
-        template <typename Void, typename T, typename List, typename ...P>
-        struct default_construct_nonrange
-        {
-            // Note `TT = T`. The SFINAE condition has to depend on this function's template parameters, otherwise this is a hard error.
-            template <typename TT = T>
-            constexpr auto operator()(P &&... params) const noexcept(noexcept(TT{static_cast<P &&>(params)...})) -> decltype(TT{static_cast<P &&>(params)...})
-            {
-                return T{static_cast<P &&>(params)...};
-            }
-        };
     }
 
     // Customization points.
     namespace custom
     {
+        namespace defaults
+        {
+            // Is `init{...}` allowed to convert to this type?
+            template <typename T, typename = void>
+            struct allow_target_type : std::true_type {};
+            // Scalars give MSVC trouble, since it e.g. tries to construct the size parameter of a vector constructor from our `init{}`, which is bad.
+            template <typename T>
+            struct allow_target_type<T, std::enable_if_t<std::is_scalar_v<T>>> : std::false_type {};
+
+            // The default implementation for `custom::element_type`, see below.
+            template <typename T, typename = void>
+            struct element_type {};
+            template <typename T>
+            struct element_type<T, decltype(void(detail::declval<typename T::value_type>))> {using type = typename T::value_type;};
+
+            // The default implementation for `custom::construct_range`, see below.
+            template <typename Void, typename T, typename Iter, typename List, typename ...P>
+            struct construct_range
+            {
+                template <typename TT = T, std::enable_if_t<std::is_constructible<TT, Iter, Iter, P...>::value, detail::nullptr_t> = nullptr>
+                constexpr T operator()(Iter begin, Iter end, P &&... params) const noexcept(std::is_nothrow_constructible<T, Iter, Iter, P...>::value)
+                {
+                    // Don't want to include `<utility>` for `std::move` or `std::forward`.
+                    return T(static_cast<Iter &&>(begin), static_cast<Iter &&>(end), static_cast<P &&>(params)...);
+                }
+            };
+
+            // The default implementation for `custom::construct_nonrange`, see below.
+            template <typename Void, typename T, typename List, typename ...P>
+            struct construct_nonrange
+            {
+                // Note `TT = T`. The SFINAE condition has to depend on this function's template parameters, otherwise this is a hard error.
+                template <typename TT = T>
+                constexpr auto operator()(P &&... params) const noexcept(noexcept(TT{static_cast<P &&>(params)...})) -> decltype(TT{static_cast<P &&>(params)...})
+                {
+                    return T{static_cast<P &&>(params)...};
+                }
+            };
+        }
+
+        // Is `init{...}` allowed to convert to this type?
+        template <typename T, typename = void>
+        struct allow_target_type : defaults::allow_target_type<T> {};
+
         // Whether to make the conversion operator of `init{...}` implicit. `T` is the target container type,
         // and `P...` are the extra constructor arguments.
         // Defaults to checking if `T` has a `std::initializer_list<U>` constructor, for any `U`.
@@ -132,38 +146,35 @@ namespace better_list_init
         // and must know exactly what we're converting to.
         // By default, return `T::value_type`, if any.
         template <typename T, typename = void>
-        struct element_type : detail::default_element_type<T> {};
+        struct element_type : defaults::element_type<T> {};
 
         // How to construct `T` from a pair of iterators. Defaults to `T(begin, end, extra...)`,
         // where `extra...` are the arguments passed to `.and_with(...)`, if any.
         // `List` receives the type of the used `init` class.
         template <typename Void, typename T, typename Iter, typename List, typename ...P>
-        struct construct_range : detail::default_construct_range<void, T, Iter, List, P...> {};
+        struct construct_range : defaults::construct_range<void, T, Iter, List, P...> {};
 
         // How to construct `T` (which is not a range) from a braced list. Defaults to `T{P...}`, where `P...` are the list elements.
         // `List` receives the type of the used `init` class.
         template <typename Void, typename T, typename List, typename ...P>
-        struct construct_nonrange : detail::default_construct_nonrange<void, T, List, P...> {};
-    }
+        struct construct_nonrange : defaults::construct_nonrange<void, T, List, P...> {};
 
-    namespace detail
-    {
-        // The default value for `custom::is_range`, see below.
-        template <typename T, typename = void>
-        struct default_is_range : std::false_type {};
-        template <typename T>
-        struct default_is_range<T, decltype(void(declval<typename custom::element_type<T>::type>()))> : std::integral_constant<bool, !std::is_aggregate_v<T>> {};
-    }
 
-    // More customization points.
-    namespace custom
-    {
+        namespace defaults
+        {
+            // The default value for `custom::is_range`, see below.
+            template <typename T, typename = void>
+            struct is_range : std::false_type {};
+            template <typename T>
+            struct is_range<T, decltype(void(detail::declval<typename custom::element_type<T>::type>()))> : std::integral_constant<bool, !std::is_aggregate_v<T>> {};
+        }
+
         // Whether `T` looks like a container or not.
         // If yes, we're going to try to construct it from a pair of iterators. If not, we're going to try to initialize it with a braced list.
         // We don't want to attempt both, because that looks error-prone (a-la the uniform init fiasco).
         // By default, we're looking for `custom::element_type` (which defaults to `::value_type`), but reject aggregates.
         template <typename T, typename = void>
-        struct is_range : detail::default_is_range<T> {};
+        struct is_range : defaults::is_range<T> {};
     }
 }
 
@@ -783,6 +794,11 @@ namespace better_list_init
         // This is specialized out-of-line to make older GCC versions happy.
         template <typename Void, typename T, typename ...Q> static constexpr bool can_nothrow_initialize_range_helper = false;
 
+        // This is specialized out-of-line to make older GCC versions happy.
+        template <typename Void, typename T, typename ...Q> static constexpr bool can_initialize_nonrange_helper         = false;
+        // This is specialized out-of-line to make older GCC versions happy.
+        template <typename Void, typename T, typename ...Q> static constexpr bool can_nothrow_initialize_nonrange_helper = false;
+
       public:
         // Whether this list can be used to initialize a range type `T`, with extra constructor arguments `Q...`.
         template <typename T, typename ...Q> static constexpr bool can_initialize_range         = can_initialize_range_helper        <void, T, Q...>;
@@ -791,8 +807,8 @@ namespace better_list_init
         // NOTE: We check `!is_range<T>` here to avoid the uniform init fiasco, at least for our lists.
         // NOTE: `sizeof...(Q) == 0` is an arbitrary restriction, hopefully forcing a more clear usage.
         // NOTE: This needs short-circuiting to make MSVC happy. I believe older GCC versions need this too.
-        template <typename T, typename ...Q> static constexpr bool can_initialize_nonrange         = std::conjunction_v<std::bool_constant<!custom::is_range<T>::value && sizeof...(Q) == 0>, detail::nonrange_brace_constructible        <T, init, P..., Q...>>;
-        template <typename T, typename ...Q> static constexpr bool can_nothrow_initialize_nonrange = std::conjunction_v<std::bool_constant<!custom::is_range<T>::value && sizeof...(Q) == 0>, detail::nothrow_nonrange_brace_constructible<T, init, P..., Q...>>;
+        template <typename T, typename ...Q> static constexpr bool can_initialize_nonrange         = can_initialize_nonrange_helper<void, T, Q...>;
+        template <typename T, typename ...Q> static constexpr bool can_nothrow_initialize_nonrange = can_nothrow_initialize_nonrange_helper<void, T, Q...>;
 
       private:
         template <typename T>
@@ -856,9 +872,8 @@ namespace better_list_init
 
       public:
         // Whether this list can be used to initialize a type `T`, with extra constructor arguments `Q...`.
-        // Returns true if `can_initialize_range<T,Q...>` or `can_initialize_nonrange<T,Q...>` is true.
-        template <typename T, typename ...Q> static constexpr bool can_initialize = can_initialize_range<T, Q...> || can_initialize_nonrange<T, Q...>;
-        template <typename T, typename ...Q> static constexpr bool can_nothrow_initialize = can_nothrow_initialize_helper<void, T, Q...>;
+        template <typename T, typename ...Q> static constexpr bool can_initialize         = custom::allow_target_type<T>::value && (can_initialize_range<T, Q...> || can_initialize_nonrange<T, Q...>);
+        template <typename T, typename ...Q> static constexpr bool can_nothrow_initialize = custom::allow_target_type<T>::value && can_nothrow_initialize_helper<void, T, Q...>;
 
         // Whether the conversion to `T` should be implicit, for extra constructor arguments `Q...`.
         template <typename T, typename ...Q>
@@ -990,11 +1005,19 @@ namespace better_list_init
 
     template <typename ...P> template <typename T, typename ...Q> constexpr bool init<P...>::can_initialize_range_helper        <std::enable_if_t<custom::is_range<T>::value && detail::constructible_from_iters        <T, typename init<P...>::template elem_iter<typename custom::element_type<T>::type>, init<P...>, Q...>::value && init<P...>::template can_initialize_elem        <typename custom::element_type<T>::type>>, T, Q...> = true;
     template <typename ...P> template <typename T, typename ...Q> constexpr bool init<P...>::can_nothrow_initialize_range_helper<std::enable_if_t<custom::is_range<T>::value && detail::nothrow_constructible_from_iters<T, typename init<P...>::template elem_iter<typename custom::element_type<T>::type>, init<P...>, Q...>::value && init<P...>::template can_nothrow_initialize_elem<typename custom::element_type<T>::type>>, T, Q...> = true;
+    template <typename ...P> template <typename T, typename ...Q> constexpr bool init<P...>::can_initialize_nonrange_helper        <std::enable_if_t<!custom::is_range<T>::value && sizeof...(Q) == 0>, T, Q...> = detail::nonrange_brace_constructible        <T, init<P...>, P..., Q...>::value;
+    template <typename ...P> template <typename T, typename ...Q> constexpr bool init<P...>::can_nothrow_initialize_nonrange_helper<std::enable_if_t<!custom::is_range<T>::value && sizeof...(Q) == 0>, T, Q...> = detail::nothrow_nonrange_brace_constructible<T, init<P...>, P..., Q...>::value;
     template <typename ...P> template <typename T, typename ...Q> constexpr bool init<P...>::can_nothrow_initialize_helper<std::enable_if_t<custom::is_range<T>::value>, T, Q...> = can_nothrow_initialize_range<T, Q...>;
     template <typename ...P> template <typename T, typename ...Q> constexpr bool init<P...>::allow_implicit_init_helper<std::enable_if_t<custom::is_range<T>::value>, T, Q...> = custom::allow_implicit_range_init<void, T, Q.../*note, no P...*/>::value;
 
     template <typename ...P>
     init(P &&...) -> init<P...>;
+
+    // Fix the `list(list)` deduction.
+    template <typename ...P> init(      init<P...> &&) -> init<      init<P...>>;
+    template <typename ...P> init(const init<P...> &&) -> init<const init<P...>>;
+    template <typename ...P> init(      init<P...> & ) -> init<      init<P...> &>;
+    template <typename ...P> init(const init<P...> & ) -> init<const init<P...> &>;
 }
 
 // The shorthand in the global namespace.

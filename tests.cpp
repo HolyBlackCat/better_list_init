@@ -617,5 +617,17 @@ int main()
         ASSERT_EQ(z, 3);
     }
 
+    { // `list(list)` deduction, implicit.
+        std::vector<std::vector<int>> v = init{init{}};
+        ASSERT_EQ(v.size(), 1);
+        ASSERT_EQ(v[0].size(), 0);
+    }
+
+    { // `list(list)` deduction, explicit.
+        std::vector<std::vector<int>> v(init{init{}});
+        ASSERT_EQ(v.size(), 1);
+        ASSERT_EQ(v[0].size(), 0);
+    }
+
     std::cout << "OK\n";
 }

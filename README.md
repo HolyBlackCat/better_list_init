@@ -109,7 +109,7 @@ Just clone the repository, add the `include` directory to the header search path
 
 To improve the build times, avoid using `init{...}` when it doesn't bring any benefit, i.e. with types that don't benefit from being moved (and are copyable), such as scalars, especially large arrays thereof.
 
-We currently test on Clang 13+, GCC 9+, and MSVC v19.33, though earlier compiler versions might work as well. At least C++17 is required.
+We currently test on Clang 13+, GCC 12+, and the latest MSVC, though earlier compiler versions might work as well. At least C++17 is required.
 
 If you don't like `init` in the global namespace, you can spell it as `better_list_init::init`, and disable the short spelling by compiling with `-DBETTERLISTINIT_SHORTHAND=0` (or by creating a file called `better_list_init_config.hpp` with `#define BETTERLISTINIT_SHORTHAND 0` in it, in a directory where `#include "..."` can find it).
 
