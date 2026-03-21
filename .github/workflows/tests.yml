@@ -12,7 +12,7 @@ jobs:
       run: |
         # Install the desired compilers.
         sudo apt install -y g++-12
-        sudo apt autoremove -y g++-11 g++-10
+        sudo apt autoremove -y g++-11 g++-10 clang-14 clang-13
     - name: List compilers
       run: make -pq | grep ^COMPILER
     - name: Run tests
